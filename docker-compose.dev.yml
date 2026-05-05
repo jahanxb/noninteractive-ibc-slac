@@ -1,0 +1,3 @@
+services:
+  slac:
+    env_file: .env.dev.docker
