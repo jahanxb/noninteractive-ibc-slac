@@ -10,7 +10,7 @@ This work is built on top of [dylanc1/pyslac (dh-based branch)](https://github.c
 ## Table of Contents
 
 1. [Background](#background)
-2. [What We Changed](#what-we-changed)
+2. [New Integration](#New-Integration)
 3. [Hardware Requirements](#hardware-requirements)
 4. [Physical Connection](#physical-connection)
 5. [Host PC Network Configuration](#host-pc-network-configuration)
@@ -39,7 +39,7 @@ The SLAC (Signal Level Attenuation Characterization) protocol, defined in ISO 15
 
 ---
 
-## What We Changed
+## New Integration
 
 Starting from Dylan's `dh-based` branch, the following changes were made:
 
@@ -82,7 +82,7 @@ The boards in the reference setup have the following addresses. You will need to
 
 ### Figure: Hardware Setup
 
-![Hardware Setup](Figures/Hardware_setup.jpg)
+![Hardware Setup](figures/1000083211.jpg)
 
 *Two devolo dLAN Green PHY Eval Board II devices. PEV board on the left, EVSE board on the right. Twisted-pair PLC cable connected between J3 screw terminals on both boards.*
 
@@ -94,7 +94,9 @@ Both boards are powered via Micro-USB cables connected to USB ports on the host 
 
 **Board 1 (PEV):** Connect the RJ45/J2 Ethernet port directly to the host PC's built-in Ethernet interface (`enp0s31f6` in the reference setup).
 
-**Board 2 (EVSE):** The EVSE board is reachable through the PLC link established over the J3 twisted-pair wire. It does not need a separate Ethernet connection to the host.
+**Board 2 (EVSE):** The EVSE board is reachable through the PLC link established over the J3 twisted-pair wire. It does not need a separate Ethernet connection to the host. But we have given PC to board2, second Ethernet interface (`enxa0cec837bab6` in the reference setup. a USB-C 
+Ethernet dongle). The host runs the EVSE Python process over this interface using raw Layer 2 sockets to communicate with the EVSE board's QCA7000 chip.
+
 
 ### PLC Wire (J3 Screw Terminals)
 
@@ -317,6 +319,9 @@ sudo venv/bin/python pyslac/examples/ev_slac_scapy.py
 
 The full handshake runs automatically. Both terminals will display the IBE key establishment details and the derived NMK. Verify that the NMK printed on both sides is identical.
 
+The terminal output samples are given in folder output_samples/single_slac_session.txt and slac_scapy.txt
+
+![Terminal Demo](figures/command_line_single_slac.png)
 ---
 
 ## Using the GUI
@@ -333,17 +338,13 @@ sudo python slac_gui.py
 
 **Console tabs:** Three tabs (EVSE, PEV, Reset) show the full output from each process in real time.
 
-### Figure: GUI Sequence Diagram
+### Figure: GUI Demo
 
-![GUI Demo](Figures/gui_demo.png)
+![GUI Demo](figures/gui_interface.png)
 
-*The Windows 98-style GUI showing the animated SLAC protocol sequence diagram. The orange IBE box confirms that key establishment produced no wire traffic.*
 
-### Figure or GIF: Full Session Run
+![Session GIF](output_samples/demo1.gif)
 
-![Session GIF](Figures/session_demo.gif)
-
-*Full IBE-SLAC session from board reset through NMK verification. Both terminals show identical NMK values derived independently via bilinear pairing.*
 
 ---
 
@@ -375,9 +376,10 @@ The dissector labels each frame with its SLAC step, direction, and a description
 
 ### Figure: Wireshark Capture
 
-![Wireshark Capture](Figures/SLAC_MATCH.png)
+![Wireshark Capture](output_samples/wireshark.png)
 
-*Wireshark capture of a complete IBE-SLAC session. 8 frames total. CM_SLAC_MATCH.CNF frame shows NMK field = 0x000...000 confirming no key material was transmitted over the wire.*
+*Wireshark capture of a complete IBE-SLAC session. 8 frames total. CM_SLAC_MATCH.CNF frame shows NMK field confirming no key material was transmitted over the wire.*
+
 
 ---
 
