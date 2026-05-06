@@ -1,7 +1,8 @@
 # IBE-SLAC: Non-Interactive Identity-Based Key Establishment for ISO 15118-3 SLAC
 
 
-This repository implements a non-interactive Identity-Based Cryptography (IBC) key establishment scheme integrated into the ISO 15118-3 SLAC protocol for EV charging security. It replaces the plaintext NMK transmission (standard SLAC) and the interactive ECDH exchange (Dylan's extension) with a zero-frame key establishment using bilinear pairings. Both EV and EVSE independently derive the same Network Membership Key (NMK) without transmitting any key material over the PLC wire.
+This repository implements a non-interactive Identity-Based Cryptography (IBC) key establishment scheme integrated into the ISO 15118-3 SLAC protocol for EV charging security. It replaces the plaintext NMK transmission (standard SLAC) and the interactive ECDH exchange with an identity-based key derivation using bilinear pairings. Both sides compute the session key locally from their MAC-based identities and 
+pre-distributed private keys. No additional protocol frames are transmitted over the PLC wire during key establishment.
 
 This work is built on top of [dylanc1/pyslac (dh-based branch)](https://github.com/dylanc1/pyslac/tree/dh-based), which itself is a fork of [EcoG-io/pyslac](https://github.com/EcoG-io/pyslac).
 
@@ -33,7 +34,7 @@ The SLAC (Signal Level Attenuation Characterization) protocol, defined in ISO 15
 
 **Standard SLAC vulnerability:** The NMK is transmitted in plaintext inside `CM_SLAC_MATCH.CNF`. Any passive attacker with a PLC sniffer can capture this frame and decrypt all PLC communication.
 
-**Dylan's ECDH extension:** Replaces plaintext NMK with an ECDH key exchange. Two additional frames (`CM_ECDH_EXCHANGE.REQ` and `CM_ECDH_EXCHANGE.RSP`) carry EC public keys. While the NMK is no longer transmitted in plaintext, the EC public keys are observable by any node on the PLC network, and the exchange is unauthenticated.
+**ECDH extension:** Replaces plaintext NMK with an ECDH key exchange. Two additional frames (`CM_ECDH_EXCHANGE.REQ` and `CM_ECDH_EXCHANGE.RSP`) carry EC public keys. While the NMK is no longer transmitted in plaintext, the EC public keys are observable by any node on the PLC network, and the exchange is unauthenticated.
 
 **This work (IBC):** Replaces the interactive ECDH exchange entirely. Both PEV and EVSE independently compute the same NMK using bilinear pairings and identity strings derived from MAC addresses. No additional frames are sent. The protocol frame count is identical to standard SLAC (8 frames). No cryptographic material appears in any transmitted frame.
 
@@ -41,7 +42,7 @@ The SLAC (Signal Level Attenuation Characterization) protocol, defined in ISO 15
 
 ## New Integration
 
-Starting from Dylan's `dh-based` branch, the following changes were made:
+Starting from `dh-based` branch, the following changes were made:
 
 - Removed the `CM_ECDH_EXCHANGE` interactive key exchange entirely
 - Added `pyslac/ibe_key_establishment.py`: Boneh-Franklin IBE over the SS512 pairing group using Charm-Crypto
@@ -425,7 +426,7 @@ PEV-EVSE MATCHED Successfully!
 | Protocol | Total Frames | Extra Key Frames | Key Material on Wire |
 |---|---|---|---|
 | Original SLAC (ISO 15118-3) | 8 | 0 — NMK in plaintext | NMK plaintext |
-| SLAC + ECDH (Dylan 2025) | 10 | +2 frames | EC public keys visible |
+| SLAC + ECDH  | 10 | +2 frames | EC public keys visible |
 | SLAC + IBC (this work) | 8 | 0 | None |
 
 ---
