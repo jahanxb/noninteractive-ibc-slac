@@ -134,7 +134,7 @@ The reference host PC has two network interfaces:
 | Interface | Connection |
 |---|---|
 | `enp0s31f6` | Built-in Ethernet, connected directly to Board 1 (PEV) |
-| `enxa0cec837bab6` | USB-C Ethernet dongle, connected to external network |
+| `enxa0cec837bab6` | USB-C Ethernet dongle, connected directly to Board 2 (EVSE) |
 
 Your interface name will differ. Find it with `ip link` and use it wherever `enp0s31f6` appears in commands and configuration files.
 
@@ -188,8 +188,8 @@ pip install charm-crypto
 ### Step 3: Clone this repository
 
 ```bash
-git clone https://github.com/[your-username]/ibe-slac
-cd ibe-slac
+git clone https://github.com/jahanxb/noninteractive-ibc-slac.git
+cd noninteractive-ibc-slac
 ```
 
 ### Step 4: Set up a virtual environment
@@ -238,7 +238,7 @@ Open `pyslac/examples/cs_configuration.json` and set your interface name:
   "parameters": [
     {
       "evse_id": "DE*SWT*E123456789",
-      "network_interface": "enp0s31f6"
+      "network_interface": "ADD_NETWORK_INTERFACE"
     }
   ]
 }
