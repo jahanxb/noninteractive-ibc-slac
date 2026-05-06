@@ -1,6 +1,6 @@
 """
 SLAC IBE Demo GUI — Windows 98 Style
-VehicleSecProject — HPDIC Lab, University of Alabama
+VehicleSecProject — University of Alabama
 
 Run: sudo python slac_gui.py
 """
@@ -174,7 +174,7 @@ class SLACDemoApp:
     def _build_title_bar(self):
         bar = tk.Frame(self.root, bg=WIN98["title_bar"], height=20)
         bar.pack(fill="x", side="top")
-        tk.Label(bar, text=" SLAC IBE Protocol Demo",
+        tk.Label(bar, text="IBC SLAC GUI",
                  bg=WIN98["title_bar"], fg=WIN98["title_text"],
                  font=("MS Sans Serif", 8, "bold")).pack(side="left", padx=4)
         close = tk.Button(bar, text="✕", bg=WIN98["btn_face"],

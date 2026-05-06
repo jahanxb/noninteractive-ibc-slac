@@ -1,0 +1,10 @@
+cffi==2.0.0
+charm-crypto-framework==0.62
+cryptography==44.0.0
+environs==14.6.0
+marshmallow==4.3.0
+pycparser==3.0
+pyparsing==3.3.2
+-e git+https://github.com/jahanxb/noninteractive-ibc-slac.git@508d9e6e7b05621379f37be8cab36f2b0d247b46#egg=pyslac
+python-dotenv==1.2.2
+scapy==2.7.0

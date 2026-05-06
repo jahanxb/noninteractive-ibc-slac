@@ -1,518 +1,543 @@
-# devolo dLAN Green PHY PLC Communication Setup and Deployment Guide
+# IBE-SLAC: Non-Interactive Identity-Based Key Establishment for ISO 15118-3 SLAC
 
-## Overview
 
-This document describes the complete setup, configuration, and deployment process for establishing Power Line Communication (PLC) between two devolo dLAN Green PHY evaluation boards using the SLAC (Signal Level Attenuation Characterization) protocol as defined in ISO 15118-3. Two implementations are covered: the standard pyslac implementation and a Diffie-Hellman enhanced version developed by Dylan (dylanc1).
+This repository implements a non-interactive Identity-Based Cryptography (IBC) key establishment scheme integrated into the ISO 15118-3 SLAC protocol for EV charging security. It replaces the plaintext NMK transmission (standard SLAC) and the interactive ECDH exchange (Dylan's extension) with a zero-frame key establishment using bilinear pairings. Both EV and EVSE independently derive the same Network Membership Key (NMK) without transmitting any key material over the PLC wire.
 
----
-
-## Hardware
-
-### Devices
-
-- Board 1: devolo dLAN Green PHY Eval Board II running PEV firmware (FW v1.1.0-02)
-  - Role: Electric Vehicle (PEV) side
-  - MAC Address: 88:FC:A6:1C:81:C2
-  - IP Address: 192.168.0.11
-  - Chip: Qualcomm QCA7000
-  - MCU: NXP LPC1758 ARM Cortex-M3
-
-- Board 2: devolo dLAN Green PHY Eval Board II running EVSE firmware (FW v1.1.0-02)
-  - Role: Electric Vehicle Supply Equipment (EVSE / Charging Station) side
-  - MAC Address: 88:FC:A6:1C:81:BB
-  - IP Address: 192.168.0.12
-  - Chip: Qualcomm QCA7000
-  - MCU: NXP LPC1758 ARM Cortex-M3
-
-### PLC Protocol
-
-- Standard: HomePlug Green PHY / IEEE 1901
-- Physical Link: Twisted pair wire connected between J3 screw terminals on both boards
-- Encryption: AES-128 at MAC layer
+This work is built on top of [dylanc1/pyslac (dh-based branch)](https://github.com/dylanc1/pyslac/tree/dh-based), which itself is a fork of [EcoG-io/pyslac](https://github.com/EcoG-io/pyslac).
 
 ---
 
-## Physical Connection Setup
+## Table of Contents
+
+1. [Background](#background)
+2. [What We Changed](#what-we-changed)
+3. [Hardware Requirements](#hardware-requirements)
+4. [Physical Connection](#physical-connection)
+5. [Host PC Network Configuration](#host-pc-network-configuration)
+6. [Software Installation](#software-installation)
+7. [Configuration](#configuration)
+8. [Running the Protocol](#running-the-protocol)
+9. [Using the GUI](#using-the-gui)
+10. [Wireshark Packet Capture](#wireshark-packet-capture)
+11. [Expected Results](#expected-results)
+12. [Troubleshooting](#troubleshooting)
+13. [Repository Structure](#repository-structure)
+14. [Protocol Comparison](#protocol-comparison)
+15. [References](#references)
+
+---
+
+## Background
+
+The SLAC (Signal Level Attenuation Characterization) protocol, defined in ISO 15118-3, establishes a logical PLC network between an electric vehicle (PEV) and its charging station (EVSE) before charging begins. The two sides must agree on a shared Network Membership Key (NMK), a 16-byte AES-128 key that encrypts all subsequent PLC traffic.
+
+**Standard SLAC vulnerability:** The NMK is transmitted in plaintext inside `CM_SLAC_MATCH.CNF`. Any passive attacker with a PLC sniffer can capture this frame and decrypt all PLC communication.
+
+**Dylan's ECDH extension:** Replaces plaintext NMK with an ECDH key exchange. Two additional frames (`CM_ECDH_EXCHANGE.REQ` and `CM_ECDH_EXCHANGE.RSP`) carry EC public keys. While the NMK is no longer transmitted in plaintext, the EC public keys are observable by any node on the PLC network, and the exchange is unauthenticated.
+
+**This work (IBC):** Replaces the interactive ECDH exchange entirely. Both PEV and EVSE independently compute the same NMK using bilinear pairings and identity strings derived from MAC addresses. No additional frames are sent. The protocol frame count is identical to standard SLAC (8 frames). No cryptographic material appears in any transmitted frame.
+
+---
+
+## What We Changed
+
+Starting from Dylan's `dh-based` branch, the following changes were made:
+
+- Removed the `CM_ECDH_EXCHANGE` interactive key exchange entirely
+- Added `pyslac/ibe_key_establishment.py`: Boneh-Franklin IBE over the SS512 pairing group using Charm-Crypto
+- Modified `pyslac/session.py`: added `cm_ibe_key_establishment()` method called after `cm_atten_char()` and before `cm_slac_match()`
+- Modified `pyslac/examples/ev_slac_scapy.py`: added `ibeKeyEstablishment()` function on the PEV side
+- Added `slac_gui.py`: a tkinter-based GUI for running the full demo workflow
+- Added `homeplug_slac.lua`: a Wireshark Lua dissector for annotated frame decoding
+
+The NMK field in `CM_SLAC_MATCH.CNF` is set to a random 16-byte value. The IBE-derived NMK is computed locally on both sides and never transmitted.
+
+---
+
+## Hardware Requirements
+
+You need exactly two devolo dLAN Green PHY Eval Board II devices and a Linux host PC.
+
+| Component | Details |
+|---|---|
+| PEV Board (Board 1) | devolo dLAN Green PHY Eval Board II |
+| EVSE Board (Board 2) | devolo dLAN Green PHY Eval Board II |
+| PLC Modem | Qualcomm QCA7000 (on both boards) |
+| Microcontroller | NXP LPC1758 ARM Cortex-M3 (on both boards) |
+| Firmware version | FW v1.1.0-02 on both boards |
+| Host OS | Ubuntu 24, Linux 6.x kernel |
+| Host Python | 3.7 or higher (tested on 3.14) |
+| Root access | Required — SLAC uses raw Layer 2 sockets |
+
+The boards in the reference setup have the following addresses. You will need to replace these with your own board MAC addresses throughout the configuration.
+
+| Role | MAC Address | IP Address |
+|---|---|---|
+| PEV (Board 1) | 88:FC:A6:1C:81:C2 | 192.168.0.11 |
+| EVSE (Board 2) | 88:FC:A6:1C:81:BB | 192.168.0.12 |
+
+---
+
+## Physical Connection
+
+### Figure: Hardware Setup
+
+![Hardware Setup](Figures/Hardware_setup.jpg)
+
+*Two devolo dLAN Green PHY Eval Board II devices. PEV board on the left, EVSE board on the right. Twisted-pair PLC cable connected between J3 screw terminals on both boards.*
 
 ### Power
 
-Both boards are powered via Micro-USB cables connected to USB ports on the host PC. No additional power supply is needed.
+Both boards are powered via Micro-USB cables connected to USB ports on the host PC. No external power supply is required.
 
 ### Ethernet
 
-Board 1 (PEV) Ethernet (RJ45/J2) is connected directly to the host PC's built-in Ethernet interface (enp0s31f6). Board 2 (EVSE) is reachable through the PLC link established over the J3 twisted pair wire.
+**Board 1 (PEV):** Connect the RJ45/J2 Ethernet port directly to the host PC's built-in Ethernet interface (`enp0s31f6` in the reference setup).
 
-### PLC Wire (J3 Twisted Pair)
+**Board 2 (EVSE):** The EVSE board is reachable through the PLC link established over the J3 twisted-pair wire. It does not need a separate Ethernet connection to the host.
 
-The two boards are connected to each other via two copper wires screwed into the J3 screw terminal blocks on each board:
+### PLC Wire (J3 Screw Terminals)
 
-    Board1 J3 Pin1 (PLC+) ---- wire ---- Board2 J3 Pin1 (PLC+)
-    Board1 J3 Pin2 (PLC-)  ---- wire ---- Board2 J3 Pin2 (PLC-)
+Connect the two boards using two copper wires screwed into the J3 screw terminal blocks on each board:
 
-A small flathead screwdriver or flat tool is used to loosen and tighten the screw terminals. Any thin copper wire works for this connection.
+```
+Board 1 J3 Pin 1 (PLC+) ---- wire ---- Board 2 J3 Pin 1 (PLC+)
+Board 1 J3 Pin 2 (PLC-)  ---- wire ---- Board 2 J3 Pin 2 (PLC-)
+```
 
-### Board Pairing
+Use a small flathead screwdriver to open and tighten the terminal screws. Any thin copper wire works.
 
-After connecting the J3 wire, press the PAIR button on Board 1 (PEV), then within 60 seconds press the PAIR button on Board 2 (EVSE). The PLC LED on both boards will go solid green to indicate a successful pairing.
+### Initial Board Pairing
+
+After connecting the J3 wire:
+
+1. Press the PAIR button on Board 1 (PEV)
+2. Within 60 seconds press the PAIR button on Board 2 (EVSE)
+3. The PLC LED on both boards will go solid green when pairing succeeds
+
+Verify the PLC link speed after pairing:
+
+```bash
+sudo plctool -i enp0s31f6 -m 88:FC:A6:1C:81:C2
+```
+
+Expected output includes `AvgPHYDR_TX = 009 mbps`.
 
 ---
 
 ## Host PC Network Configuration
 
-### Network Interfaces
+The reference host PC has two network interfaces:
 
-The host PC has two network interfaces:
+| Interface | Connection |
+|---|---|
+| `enp0s31f6` | Built-in Ethernet, connected directly to Board 1 (PEV) |
+| `enxa0cec837bab6` | USB-C Ethernet dongle, connected to external network |
 
-    enp0s31f6     -- built-in Ethernet, connected directly to Board1 (PEV)
-    enxa0cec837bab6 -- USB-C Ethernet dongle, connected to university internet
+Your interface name will differ. Find it with `ip link` and use it wherever `enp0s31f6` appears in commands and configuration files.
 
-### Board IP Discovery
+Verify both boards are reachable:
 
-The boards run their own internal network stack and assign themselves fixed IPs. The host PC does not need a static IP on enp0s31f6 to reach the boards. To verify the boards are reachable:
+```bash
+ping 192.168.0.11   # PEV board
+ping 192.168.0.12   # EVSE board
+```
 
-    ping 192.168.0.11
-    ping 192.168.0.12
+Query board hardware directly using plctool:
 
-### Hardware Query via plctool
-
-The QCA7000 chip on each board can be queried directly using plctool:
-
-    sudo plctool -i enp0s31f6 -I
-    sudo plctool -i enp0s31f6 -I 88:FC:A6:1C:81:BB
-
-This returns real hardware information including MAC address, manufacturer, firmware role, network key, and network ID directly from the board hardware.
-
----
-
-## Project Directory Structure
-
-All projects reside under:
-
-    /opt/VehicleSecProject/
-
-The directory contains two separate deployments:
-
-    /opt/VehicleSecProject/
-        slac_plain/
-            pyslac/         -- Standard pyslac (EcoG-io/pyslac, v0.8.3)
-        slac_dylan_ddh/
-            pyslac/         -- Dylan's dh-based pyslac fork (dylanc1/pyslac, dh-based branch)
+```bash
+sudo plctool -i enp0s31f6 -I 88:FC:A6:1C:81:C2
+sudo plctool -i enxa0cec837bab6 -I 88:FC:A6:1C:81:BB
+```
 
 ---
 
-## Project 1: Standard pyslac
+## Software Installation
 
-### Source
+### Step 1: Install PBC Library (required for Charm-Crypto)
 
-Repository: https://github.com/EcoG-io/pyslac
-Location on disk: /opt/VehicleSecProject/slac_plain/pyslac
+Charm-Crypto needs the PBC (Pairing-Based Cryptography) library built from source.
 
-### Description
+```bash
+sudo apt install libgmp-dev flex bison
+wget https://crypto.stanford.edu/pbc/files/pbc-0.5.14.tar.gz
+tar xzf pbc-0.5.14.tar.gz
+cd pbc-0.5.14
+./configure
+make
+sudo make install
+sudo ldconfig
+```
 
-This implements the standard SLAC protocol as defined in ISO 15118-3. It handles the full PEV-EVSE association process including parameter exchange, attenuation characterization, and SLAC matching. The NMK (Network Membership Key) used for AES-128 encryption of the PLC link is randomly generated and delivered to the PEV inside the CM_SLAC_MATCH message.
+### Step 2: Install Charm-Crypto
 
-### Directory Layout
+```bash
+git clone https://github.com/JHUISI/charm.git
+cd charm
+pip install .
+```
 
-    /opt/VehicleSecProject/slac_plain/pyslac/
-        pyslac/
-            examples/
-                single_slac_session.py      -- EVSE side entry point
-                multiple_slac_sessions.py   -- multi-EVSE entry point
-                ev_slac_scapy.py            -- PEV simulator using scapy
-                cs_configuration.json       -- interface and EVSE ID config
-            session.py                      -- core SLAC session logic
-            environment.py                  -- environment variable handling
-            enums.py                        -- SLAC message type definitions
-            sockets/
-                async_linux_socket.py       -- raw socket implementation
-        .env                                -- environment settings
-        .env.dev.local                      -- template for local settings
-        Makefile                            -- run targets
-        pyproject.toml                      -- project dependencies
-        poetry.lock                         -- locked dependency versions
+If that fails, try:
 
-### Installation
+```bash
+pip install charm-crypto
+```
 
-Step 1 - Install Poetry:
+### Step 3: Clone this repository
 
-    curl -sSL https://install.python-poetry.org | python3 -
-    export PATH="$HOME/.local/bin:$PATH"
+```bash
+git clone https://github.com/[your-username]/ibe-slac
+cd ibe-slac
+```
 
-Step 2 - Fix marshmallow version conflict (Python 3.14 compatibility):
+### Step 4: Set up a virtual environment
 
-    sudo pip install "marshmallow>=3.0.0,<4.0.0" "environs==9.5.0" --break-system-packages
+```bash
+python3 -m venv venv
+source venv/bin/activate
+pip install scapy
+```
 
-Step 3 - Install pyslac into system Python:
+### Step 5: Fix marshmallow version conflict (Python 3.14)
 
-    cd /opt/VehicleSecProject/slac_plain/pyslac
-    sudo pip install -e . --break-system-packages --ignore-installed cryptography
+```bash
+sudo pip install "marshmallow>=3.0.0,<4.0.0" "environs==9.5.0" --break-system-packages
+```
 
-Step 4 - Verify installation:
+### Step 6: Install the pyslac package
 
-    sudo python -c "import pyslac; print(pyslac.__file__)"
-    # Expected: /opt/VehicleSecProject/slac_plain/pyslac/pyslac/__init__.py
+```bash
+sudo pip install -e . --break-system-packages --ignore-installed cryptography
+```
 
-### Configuration
+### Step 7: Verify installation
 
-The interface and EVSE ID are configured in:
+```bash
+sudo python -c "import pyslac; print(pyslac.__file__)"
+```
 
-    /opt/VehicleSecProject/slac_plain/pyslac/pyslac/examples/cs_configuration.json
+Expected output:
 
-Contents:
+```
+/path/to/ibe-slac/pyslac/__init__.py
+```
 
+---
+
+## Configuration
+
+### Network Interface and Board MAC Addresses
+
+Open `pyslac/examples/cs_configuration.json` and set your interface name:
+
+```json
+{
+  "number_of_evses": 1,
+  "parameters": [
     {
-      "number_of_evses": 1,
-      "parameters": [
-        {
-          "evse_id": "DE*SWT*E123456789",
-          "network_interface": "enp0s31f6"
-        }
-      ]
+      "evse_id": "DE*SWT*E123456789",
+      "network_interface": "enp0s31f6"
     }
+  ]
+}
+```
 
-The environment settings are in:
+Open `pyslac/examples/ev_slac_scapy.py` and set your board MAC addresses and interface:
 
-    /opt/VehicleSecProject/slac_plain/pyslac/.env
+```python
+PEV_MAC  = "XX:XX:XX:XX:XX:XX"   # MAC address of your PEV board
+EVSE_MAC = "XX:XX:XX:XX:XX:XX"   # MAC address of your EVSE board
+IFACE    = "enp0s31f6"            # Your Ethernet interface name
+```
 
-Contents:
+Open `pyslac/session.py` and set the EVSE board MAC:
 
-    SLAC_INIT_TIMEOUT=1000
-    LOG_LEVEL="DEBUG"
+```python
+host_mac = "XX:XX:XX:XX:XX:XX"   # MAC address of your EVSE board
+```
 
-### Running
+Open `slac_gui.py` and update these constants at the top:
 
-Open two terminals. Start the EVSE side first in Terminal 1:
+```python
+IFACE      = "enp0s31f6"            # Your interface name
+BOARD_PEV  = "XX:XX:XX:XX:XX:XX"   # PEV board MAC
+BOARD_EVSE = "XX:XX:XX:XX:XX:XX"   # EVSE board MAC
+```
 
-    cd /opt/VehicleSecProject/slac_plain/pyslac
-    make run-local-sudo-single
+### Environment Settings
 
-Wait until the output shows:
+Create or edit `.env` in the project root:
 
-    DEBUG:slac_session:CM_SLAC_PARM: Started...
-
-Then immediately start the PEV simulator in Terminal 2:
-
-    cd /opt/VehicleSecProject/slac_plain/pyslac
-    make run-ev-slac
-
-### Expected Output
-
-EVSE side (Terminal 1):
-
-    INFO:slac_session: Starting PySlac version: 0.8.3
-    INFO:slac_session:CM_SET_KEY: Started...
-    DEBUG:slac_session:New NMK: b'529d0646839c7ba19868bc17454f8e23'
-    INFO:slac_session:CM_SET_KEY: Finished!
-    DEBUG:slac_session:CM_SLAC_PARM: Started...
-    DEBUG:slac_session:Sent SLAC_PARM.CNF
-    DEBUG:slac_session:CM_START_ATTEN_CHAR: Finished!
-    DEBUG:slac_session:CM_MNBC_SOUND: Finished!
-    DEBUG:slac_session:CM_ATTEN_CHAR: Finished!
-    DEBUG:slac_session:CM_SLAC_MATCH: Finished!
-    INFO:slac_session:PEV-EVSE MATCHED Successfully, Link Established
-
-PEV side (Terminal 2):
-
-    EV:Starting Setup
-    EV:Finished Setup
-    EV:Starting Key Confirmation
-    EV:Sent Key Confirmation
-    EV:Sending Param Request
-    EV:Sent Param Request
-    EV:Sending Attenuation Characterization Indication
-    EV:Sending MNBC Sound Indication
-    EV:Sending Attenuation Characterization Response
-    EV:Starting Slac Match
-    EV:Sending Slac Match Request
-
-### SLAC Protocol Steps
-
-    1. CM_SET_KEY         -- EVSE sets new random NMK into QCA7000 chip
-    2. CM_SLAC_PARM       -- EVSE broadcasts SLAC parameters, PEV responds
-    3. CM_START_ATTEN_CHAR -- signal attenuation characterization begins
-    4. CM_MNBC_SOUND      -- PEV sends sound packets, EVSE measures attenuation
-    5. CM_ATTEN_CHAR      -- attenuation results exchanged
-    6. CM_SLAC_MATCH      -- NMK delivered to PEV, link established
+```
+SLAC_INIT_TIMEOUT=10000
+LOG_LEVEL=DEBUG
+```
 
 ---
 
-## Project 2: Dylan's Diffie-Hellman Enhanced pyslac
+## Running the Protocol
 
-### Source
+**The board reset in Step 1 is mandatory before every session.** The EVSE runs `evse_set_key()` at startup which reprograms the QCA7000 with a new random NMK. If the boards were previously paired with a different NMK, the PLC link will break and SLAC frames will not be received. Always reset and re-pair before each run.
 
-Repository: https://github.com/dylanc1/pyslac (branch: dh-based)
-Location on disk: /opt/VehicleSecProject/slac_dylan_ddh/pyslac
+### Step 1: Reset Both Boards and Delete IBE Key Files
 
-### Description
+```bash
+# Factory reset both boards
+sudo plctool -i enxa0cec837bab6 -T XX:XX:XX:XX:XX:XX   # EVSE MAC
+sudo plctool -i enp0s31f6 -T XX:XX:XX:XX:XX:XX   # PEV MAC
 
-This is a fork of the standard pyslac that adds an ECDH (Elliptic Curve Diffie-Hellman) key exchange step between the attenuation characterization and the SLAC match. The key difference from standard SLAC is that the NMK is never transmitted over the wire in plaintext. Instead, both PEV and EVSE independently compute the same shared secret using their exchanged public keys. This prevents an attacker who captures the SLAC handshake from learning the NMK.
+# Delete IBE key files — forces fresh key generation each run
+rm -f ibe_master_secret.bin ibe_generator.bin
 
-### How ECDH Improves Standard SLAC Security
+# Wait 60 seconds for boards to auto-pair, then verify link
+sudo plctool -i enp0s31f6 -m XX:XX:XX:XX:XX:XX   # PEV MAC
+# Expected: AvgPHYDR_TX = 009 mbps
+```
 
-Standard SLAC vulnerability:
+### Step 2: Start EVSE (Terminal 1)
 
-    CM_SLAC_MATCH.CNF contains the NMK in plaintext
-    An attacker capturing this frame learns the AES-128 key
-    All subsequent PLC traffic can be decrypted
+```bash
+cd /path/to/ibe-slac
+sudo venv/bin/python pyslac/examples/single_slac_session.py
+```
 
-Dylan's dh-based improvement:
+Wait until the terminal prints:
 
-    ECDH public keys are exchanged in a new CM_ECDH_EXCHANGE message
-    Both sides compute: shared_secret = their_private_key * peer_public_key
-    NMK is derived from the shared secret
-    NMK is never transmitted -- attacker cannot recover it from captured frames
+```
+CP State B : EVSE waiting for CM_SLAC_PARM.REQ...
+```
 
-### Directory Layout
+The EVSE takes approximately 12 seconds to initialize. Do not start the EV until this line appears.
 
-    /opt/VehicleSecProject/slac_dylan_ddh/pyslac/
-        pyslac/
-            examples/
-                single_slac_session.py      -- EVSE side entry point
-                ev_slac_scapy.py            -- PEV simulator with ECDH support
-                cs_configuration.json       -- interface and EVSE ID config
-            session.py                      -- core SLAC session logic with ECDH
-            environment.py                  -- environment variable handling
-            enums.py                        -- SLAC message types including CM_ECDH_EXCHANGE
-            sockets/
-                async_linux_socket.py       -- raw socket implementation
-        .env                                -- environment settings
-        Makefile                            -- run targets
-        pyproject.toml                      -- project dependencies
+### Step 3: Start EV (Terminal 2)
 
-### Installation
+```bash
+sudo venv/bin/python pyslac/examples/ev_slac_scapy.py
+```
 
-Step 1 - Install dependencies (includes cryptography library for ECDH):
-
-    cd /opt/VehicleSecProject/slac_dylan_ddh/pyslac
-    sudo pip install -e . --break-system-packages --ignore-installed cryptography
-
-Step 2 - Remove old pyslac from system if previously installed:
-
-    sudo rm -rf /usr/local/lib/python3.14/dist-packages/pyslac*
-
-Step 3 - Verify correct version is loaded:
-
-    sudo python -c "import pyslac; print(pyslac.__file__)"
-    # Expected: /opt/VehicleSecProject/slac_dylan_ddh/pyslac/pyslac/__init__.py
-
-### Configuration
-
-Same as standard pyslac. Edit the interface in:
-
-    /opt/VehicleSecProject/slac_dylan_ddh/pyslac/pyslac/examples/cs_configuration.json
-
-Contents:
-
-    {
-      "number_of_evses": 1,
-      "parameters": [
-        {
-          "evse_id": "DE*SWT*E123456789",
-          "network_interface": "enp0s31f6"
-        }
-      ]
-    }
-
-Environment settings in:
-
-    /opt/VehicleSecProject/slac_dylan_ddh/pyslac/.env
-
-Contents:
-
-    SLAC_INIT_TIMEOUT=10000
-    LOG_LEVEL="DEBUG"
-
-Interface fixes applied to example files during setup:
-
-    sed -i 's/eth0/enp0s31f6/g' pyslac/examples/single_slac_session.py
-    sed -i 's/enp0s3"/enp0s31f6"/g' pyslac/examples/ev_slac_scapy.py
-
-### Running
-
-Because sudo does not inherit the Python path, both sides must be run with PYTHONPATH set explicitly.
-
-Open two terminals. Start EVSE side first in Terminal 1:
-
-    cd /opt/VehicleSecProject/slac_dylan_ddh/pyslac
-    sudo PYTHONPATH=/opt/VehicleSecProject/slac_dylan_ddh/pyslac python pyslac/examples/single_slac_session.py
-
-Wait until the output shows:
-
-    DEBUG:slac_session:CM_SLAC_PARM: Started...
-
-Then immediately start PEV simulator in Terminal 2:
-
-    cd /opt/VehicleSecProject/slac_dylan_ddh/pyslac
-    sudo PYTHONPATH=/opt/VehicleSecProject/slac_dylan_ddh/pyslac python pyslac/examples/ev_slac_scapy.py
-
-### Expected Output
-
-EVSE side (Terminal 1):
-
-    INFO:slac_session: Starting PySlac version: 0.8.3
-    INFO:slac_session:CM_SET_KEY: Started...
-    DEBUG:slac_session:New NMK: b'603a5d44c3396609201fa397bdfb700c'
-    INFO:slac_session:CM_SET_KEY: Finished!
-    DEBUG:slac_session:CM_SLAC_PARM: Started...
-    DEBUG:slac_session:Sent SLAC_PARM.CNF
-    DEBUG:slac_session:CM_START_ATTEN_CHAR: Finished!
-    DEBUG:slac_session:CM_MNBC_SOUND: Finished!
-    DEBUG:slac_session:CM_ATTEN_CHAR: Finished!
-    DEBUG:slac_session:CM_ECDH_EXCHANGE: Started...
-    DEBUG:slac_session:Sent ECDH_EXCHANGE.REQ
-    DEBUG:slac_session:New NMK Established!
-    DEBUG:slac_session:New NMK: b'\xda\x85\xed\x0f\xe7\xe39\x98\x92\x99Ep^\xa0\x99\xb5'
-    DEBUG:slac_session:CM_SLAC_MATCH: Finished!
-    INFO:slac_session:PEV-EVSE MATCHED Successfully, Link Established
-
-PEV side (Terminal 2):
-
-    EV:Starting Setup
-    EV:Finished Setup
-    EV:Starting Key Confirmation
-    EV:Sent Key Confirmation
-    EV:Sending Param Request
-    EV:Sent Param Request
-    EV:Sending Attenuation Characterization Indication
-    EV:Sending MNBC Sound Indication
-    EV:Sending Attenuation Profile Indication
-    EV:Sending Attenuation Characterization Response
-    EV:Starting ECDH Exchange
-    Public key: b'\x04\xc9\xc6\xae\xac\xc4\x9f\xba\xb3\x1cp\xd9\xa0\x18...'
-    EV:Sending ECDH Exchange Response
-    Sent ECDH Exchange frame
-    EV:Starting Slac Match
-    EV:Sending Slac Match Request
-
-### SLAC with ECDH Protocol Steps
-
-    1.  CM_SET_KEY           -- EVSE sets initial NMK into QCA7000 chip
-    2.  CM_SLAC_PARM         -- EVSE broadcasts SLAC parameters, PEV responds
-    3.  CM_START_ATTEN_CHAR  -- signal attenuation characterization begins
-    4.  CM_MNBC_SOUND        -- PEV sends sound packets, EVSE measures attenuation
-    5.  CM_ATTEN_CHAR        -- attenuation results exchanged
-    6.  CM_ECDH_EXCHANGE     -- EVSE sends its ECDH public key to PEV
-    7.  PEV sends its ECDH public key back to EVSE
-    8.  Both sides independently compute the shared secret
-    9.  New NMK is derived from the shared secret (never transmitted)
-    10. CM_SLAC_MATCH        -- link established with DH-derived NMK
+The full handshake runs automatically. Both terminals will display the IBE key establishment details and the derived NMK. Verify that the NMK printed on both sides is identical.
 
 ---
 
-## PLC LED Behavior
+## Using the GUI
 
-During normal pairing (PAIR button press):
-- PLC LED solid green -- boards are paired and PLC link is active
+The GUI automates the full workflow and provides an animated sequence diagram showing each SLAC step as it executes.
 
-During pyslac execution:
-- PLC LED goes off at start -- pyslac resets the NMK via CM_SET_KEY
-- PLC LED may briefly light during SLAC matching
-- PLC LED off at end -- session closes and network is left (Leaving Logical Network)
+```bash
+sudo python slac_gui.py
+```
 
-This is expected behavior. In a real EV charging scenario each session generates a fresh unique NMK. To restore the PLC LED after running pyslac, press the PAIR button on both boards again.
+**Panel 1 — Board Reset:** Click "Reset Boards". The GUI factory resets both QCA7000 boards, deletes IBE key files, waits 60 seconds for boards to auto-pair, then verifies the PLC link speed. A progress bar shows the countdown.
 
----
+**Panel 2 — Run SLAC+IBE:** Click "Start Session". The GUI starts the EVSE process, waits 15 seconds for chip initialization, then starts the EV process. The sequence diagram on the left animates each protocol step as it is logged. The IBE step shows a highlighted box labelled "IBE — NO WIRE TRAFFIC" between the attenuation and match steps.
 
-## System Requirements
+**Console tabs:** Three tabs (EVSE, PEV, Reset) show the full output from each process in real time.
 
-    OS:           Linux (Ubuntu/Debian)
-    Python:       3.7 or higher (tested on 3.14 with compatibility fixes)
-    Root access:  Required (SLAC uses raw Layer 2 socket frames)
-    Tools:        plctool, nmap, tcpdump, poetry
+### Figure: GUI Sequence Diagram
 
-### Package Dependencies
+![GUI Demo](Figures/gui_demo.png)
 
-Standard pyslac:
+*The Windows 98-style GUI showing the animated SLAC protocol sequence diagram. The orange IBE box confirms that key establishment produced no wire traffic.*
 
-    environs==9.5.0
-    marshmallow>=3.0.0,<4.0.0
-    python-dotenv
+### Figure or GIF: Full Session Run
 
-Dylan's dh-based pyslac (additional):
+![Session GIF](Figures/session_demo.gif)
 
-    cryptography==44.0.0
-    cffi>=1.12
-    pycparser
+*Full IBE-SLAC session from board reset through NMK verification. Both terminals show identical NMK values derived independently via bilinear pairing.*
 
 ---
 
-## Common Issues and Fixes
+## Wireshark Packet Capture
+#### Not mandatory but for better packet exploration, you can use this plugin. 
+### Install the Custom Lua Dissector
 
-Issue: ModuleNotFoundError: No module named 'pyslac'
-Fix: Run with PYTHONPATH set explicitly:
-    sudo PYTHONPATH=/opt/VehicleSecProject/slac_dylan_ddh/pyslac python pyslac/examples/single_slac_session.py
+```bash
+sudo cp homeplug_slac.lua /usr/lib/x86_64-linux-gnu/wireshark/plugins/
+```
 
-Issue: AttributeError: module 'marshmallow' has no attribute '__version_info__'
-Fix: Downgrade marshmallow to 3.x:
-    sudo pip install "marshmallow>=3.0.0,<4.0.0" --break-system-packages --force-reinstall
+Reload plugins in Wireshark with `Ctrl+Shift+L`.
 
-Issue: OSError: There is no such interface eth0
-Fix: Update cs_configuration.json to use enp0s31f6 instead of eth0
+### Capture Filter
 
-Issue: ImportError: cannot import name 'CM_ECDH_EXCHANGE' from 'pyslac.enums'
-Fix: Old pyslac installation is being loaded. Remove it:
-    sudo rm -rf /usr/local/lib/python3.14/dist-packages/pyslac*
+To capture only HomePlug AV SLAC frames:
 
-Issue: SLAC matching times out (Matching process task canceled)
-Fix: Start the PEV simulator (Terminal 2) faster after the EVSE starts.
-     Increase timeout in .env: SLAC_INIT_TIMEOUT=10000
+```
+eth.type == 0x88e1
+```
 
-Issue: error: uninstall-no-record-file for cryptography
-Fix: Use --ignore-installed flag:
-    sudo pip install -e . --break-system-packages --ignore-installed cryptography
+### Capture to File
+
+```bash
+sudo tshark -i enp0s31f6 -f "ether proto 0x88e1" -w capture.pcap
+```
+
+The dissector labels each frame with its SLAC step, direction, and a description of what it carries. For `CM_SLAC_MATCH.CNF` it shows the NMK field with a note explaining that the real NMK is never transmitted.
+
+### Figure: Wireshark Capture
+
+![Wireshark Capture](Figures/SLAC_MATCH.png)
+
+*Wireshark capture of a complete IBE-SLAC session. 8 frames total. CM_SLAC_MATCH.CNF frame shows NMK field = 0x000...000 confirming no key material was transmitted over the wire.*
 
 ---
 
-## Quick Reference Commands
+## Expected Results
 
-Check boards are reachable:
+### Terminal Output
 
-    ping 192.168.0.11
-    ping 192.168.0.12
+After a successful run you should see the following on both terminals. The NMK values must be identical.
 
-Query board hardware info:
+**EVSE terminal:**
 
-    sudo plctool -i enp0s31f6 -I
-    sudo plctool -i enp0s31f6 -I 88:FC:A6:1C:81:BB
+```
+CM_SET_KEY: Finished!
+[STEP 1]  SLAC PARAMETER EXCHANGE + IDENTITY DISCOVERY
+  EV   ID : EV:88fca61c81c2
+  EVSE ID : EVSE:88fca61c81bb
 
-Capture PLC traffic:
+[STEP 5]  IBE KEY ESTABLISHMENT  (EVSE Side)
+  NMK     : 578e4650bedb6d9e0164b6abc55d89de  (16 bytes)
+  NID     : 44adefa9e2d30e  (7 bytes)
 
-    sudo tcpdump -i enp0s31f6 -e -n
+[STEP 6]  SLAC MATCH - HANDSHAKE COMPLETE
+  Result  : PEV-EVSE MATCHED
 
-Run standard pyslac EVSE:
+PEV-EVSE MATCHED Successfully, Link Established
+```
 
-    cd /opt/VehicleSecProject/slac_plain/pyslac
-    make run-local-sudo-single
+**EV terminal:**
 
-Run standard pyslac PEV:
+```
+[STEP 6]  IBE KEY ESTABLISHMENT  (PEV Side)
+  NMK     : 578e4650bedb6d9e0164b6abc55d89de  (16 bytes)
+  NID     : 44adefa9e2d30e  (7 bytes)
 
-    cd /opt/VehicleSecProject/slac_plain/pyslac
-    make run-ev-slac
+SLAC + IBE HANDSHAKE COMPLETE
+  NMK Match : Both EV and EVSE derived same NMK independently
 
-Run dh-based pyslac EVSE:
+PEV-EVSE MATCHED Successfully!
+```
 
-    cd /opt/VehicleSecProject/slac_dylan_ddh/pyslac
-    sudo PYTHONPATH=/opt/VehicleSecProject/slac_dylan_ddh/pyslac python pyslac/examples/single_slac_session.py
+### Protocol Frame Count
 
-Run dh-based pyslac PEV:
+| Protocol | Total Frames | Extra Key Frames | Key Material on Wire |
+|---|---|---|---|
+| Original SLAC (ISO 15118-3) | 8 | 0 — NMK in plaintext | NMK plaintext |
+| SLAC + ECDH (Dylan 2025) | 10 | +2 frames | EC public keys visible |
+| SLAC + IBC (this work) | 8 | 0 | None |
 
-    cd /opt/VehicleSecProject/slac_dylan_ddh/pyslac
-    sudo PYTHONPATH=/opt/VehicleSecProject/slac_dylan_ddh/pyslac python pyslac/examples/ev_slac_scapy.py
+---
 
-Restore PLC pairing after running pyslac:
+## Troubleshooting
 
-    Press PAIR on PEV board (Board1)
-    Within 60 seconds press PAIR on EVSE board (Board2)
-    PLC LED will go solid green
+**`ModuleNotFoundError: No module named 'pyslac'`**
+
+Run with the virtual environment Python explicitly:
+```bash
+sudo venv/bin/python pyslac/examples/single_slac_session.py
+```
+
+**`ModuleNotFoundError: No module named 'charm'`**
+
+Charm-Crypto is not installed in the environment being used by sudo. Install it system-wide:
+```bash
+sudo pip install charm-crypto --break-system-packages
+```
+
+**`AttributeError: module 'marshmallow' has no attribute '__version_info__'`**
+
+Downgrade marshmallow to a 3.x version:
+```bash
+sudo pip install "marshmallow>=3.0.0,<4.0.0" --break-system-packages --force-reinstall
+```
+
+**`OSError: There is no such interface`**
+
+The interface name in `cs_configuration.json` or `ev_slac_scapy.py` does not match your system. Run `ip link` to find the correct name.
+
+**EVSE times out waiting for `CM_SLAC_PARM.REQ`**
+
+The EV was started before the EVSE finished chip initialization. The EVSE needs approximately 12 seconds after printing `CM_SET_KEY: Finished!` before it is ready. Wait for the `EVSE waiting for CM_SLAC_PARM.REQ` message before starting the EV.
+
+**`Timeout waiting for CM_SLAC_PARM.CNF`**
+
+The boards lost their PLC pairing because `evse_set_key()` programmed a new random NMK into the chip. Perform the full board reset procedure (Step 1) and wait for the 60-second settle period before running again.
+
+**PLC LED goes off during session**
+
+This is expected. `evse_set_key()` resets the NMK on the QCA7000 chip at the start of each session, which drops the PLC pairing. The LED will go solid again after the SLAC match completes. To restore the pairing after running, press the PAIR button on both boards.
+
+**`error: uninstall-no-record-file for cryptography`**
+
+```bash
+sudo pip install -e . --break-system-packages --ignore-installed cryptography
+```
+
+**NMK values differ between EV and EVSE**
+
+The IBE key files (`ibe_master_secret.bin`, `ibe_generator.bin`) were not deleted before the run. One side loaded a stale master secret. Delete the files and run again:
+```bash
+rm -f ibe_master_secret.bin ibe_generator.bin
+```
+
+---
+
+## Repository Structure
+
+```
+ibe-slac/
+    pyslac/
+        examples/
+            single_slac_session.py      EVSE side entry point
+            ev_slac_scapy.py            EV simulator with IBC
+            cs_configuration.json       Interface and EVSE ID config
+        session.py                      EVSE SLAC session with IBC integration
+        ibe_key_establishment.py        Boneh-Franklin IBE over SS512
+        environment.py                  Environment variable handling
+        enums.py                        SLAC message type definitions
+        sockets/
+            async_linux_socket.py       Raw socket implementation
+    slac_gui.py                         Demo GUI
+    homeplug_slac.lua                   Wireshark Lua dissector
+    Figures/
+        Hardware_setup.jpg              Hardware photo
+        SLAC_protocol.png               Protocol sequence diagram
+        SLAC_MATCH.png                  Wireshark capture screenshot
+        gui_demo.png                    GUI screenshot
+        session_demo.gif                Full session demo GIF
+    .env                                Environment settings
+    requirements.txt                    Python dependencies
+    README.md                           This file
+```
+
+---
+
+## Protocol Comparison
+
+The full SLAC + IBC frame sequence:
+
+| Step | Frame | Direction | Description |
+|---|---|---|---|
+| 1 | CM_SLAC_PARM.REQ | PEV → Broadcast | EV announces presence. EVSE learns PEV MAC, becomes IBE identity. |
+| 2 | CM_SLAC_PARM.CNF | EVSE → PEV | EVSE confirms. PEV learns EVSE MAC, becomes IBE identity. |
+| 3 | CM_START_ATTEN_CHAR.IND | PEV → Broadcast | EV initiates attenuation measurement. |
+| 4 | CM_MNBC_SOUND.IND | PEV → Broadcast | Sound bursts for PLC attenuation measurement. |
+| 5 | CM_ATTEN_CHAR.IND | EVSE → PEV | EVSE sends averaged attenuation profile. |
+| 6 | CM_ATTEN_CHAR.RSP | PEV → EVSE | EV acknowledges. Both sides begin IBC locally. |
+| 7 | IBC Key Establishment | LOCAL | Both sides compute bilinear pairing independently. Zero frames sent. |
+| 8 | CM_SLAC_MATCH.REQ | PEV → EVSE | EV requests final SLAC matching. |
+| 9 | CM_SLAC_MATCH.CNF | EVSE → PEV | EVSE confirms. Session established. |
 
 ---
 
 ## References
 
-- ISO 15118-3: Vehicle to Grid Communication Interface
+- ISO 15118-3: Vehicle to Grid Communication Interface — Physical and Data Link Layer Requirements
+- Boneh, D. and Franklin, M., Identity-Based Encryption from the Weil Pairing, CRYPTO 2001
+- Baker, R. and Martinovic, I., Losing the Car Keys: Wireless PHY-Layer Insecurity in EV Charging, USENIX Security 2019
+- EcoG-io/pyslac: https://github.com/EcoG-io/pyslac
+- dylanc1/pyslac dh-based branch: https://github.com/dylanc1/pyslac/tree/dh-based
+- Charm-Crypto: https://github.com/JHUISI/charm
+- Qualcomm open-plc-utils (plctool): https://github.com/qca/open-plc-utils
 - HomePlug Green PHY Specification Release Version 1.1
 - devolo dLAN Green PHY Eval Board II Data Sheet v1.00
-- EcoG-io/pyslac: https://github.com/EcoG-io/pyslac
-- dylanc1/pyslac dh-based: https://github.com/dylanc1/pyslac/tree/dh-based
-- Qualcomm open-plc-utils: https://github.com/qca/open-plc-utils
-- AcCCS project: https://github.com/IdahoLabResearch/AcCCS

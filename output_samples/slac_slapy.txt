@@ -1,0 +1,183 @@
+sudo venv/bin/python pyslac/examples/ev_slac_scapy.py
+
+===================================================================
+  SLAC + IBE PROTOCOL SESSION STARTING  (PEV Side)
+===================================================================
+  ▶ PEV  MAC  : 88:FC:A6:1C:81:C2
+  ▶ EVSE MAC  : 88:FC:A6:1C:81:BB
+  ▶ Interface : enp0s31f6
+  ▶ Protocol  : ISO 15118-3 SLAC + IBE Key Establishment
+  ▶ IBE Scheme: Boneh-Franklin over SS512 pairing group
+  ▶ Hardware  : devolo dLAN Green PHY QCA7000
+===================================================================
+
+DEBUG:/opt/VehicleSecProject/pyslac/pyslac/examples/ev_slac_scapy.py:EV:Starting Key Confirmation
+DEBUG:/opt/VehicleSecProject/pyslac/pyslac/examples/ev_slac_scapy.py:EV:Sent Key Confirmation
+DEBUG:/opt/VehicleSecProject/pyslac/pyslac/examples/ev_slac_scapy.py:Sniffer ready
+
+===================================================================
+  [STEP 1]  PEV → Broadcast: CM_SLAC_PARM.REQ
+===================================================================
+  ▶ Action    : EV announces presence on PLC network
+  ▶ Dest MAC  : ff:ff:ff:ff:ff:ff (Broadcast)
+
+  ┌─────────────────────────────────────────────────────────────┐
+  │               IDENTITY DISCOVERY  —  PEV Side               │
+  ├─────────────────────────────────────────────────────────────┤
+  │  PEV knows its own MAC — used as its IBE identity              │
+  │  EVSE identity confirmed from CM_SLAC_PARM.CNF source MAC      │
+  │                                                                │
+  │  PEV  MAC   : 88:FC:A6:1C:81:C2                              │
+  │  IBE ID(PEV): EV:88fca61c81c2                                │
+  │                                                                │
+  │  EVSE MAC   : 88:FC:A6:1C:81:BB                              │
+  │  IBE ID(EV) : EVSE:88fca61c81bb                              │
+  │                                                                │
+  │  ✓ Both identities known to PEV                                │
+  │  ✓ These identity strings will be used as IBE inputs           │
+  │    at Step to derive the session NMK via pairing             │
+  └─────────────────────────────────────────────────────────────┘
+===================================================================
+
+DEBUG:/opt/VehicleSecProject/pyslac/pyslac/examples/ev_slac_scapy.py:EV:Sending Param Request
+DEBUG:/opt/VehicleSecProject/pyslac/pyslac/examples/ev_slac_scapy.py:EV:1: Sent Param Request
+DEBUG:/opt/VehicleSecProject/pyslac/pyslac/examples/ev_slac_scapy.py:Sniffer captured mm_type: 0x6064
+DEBUG:/opt/VehicleSecProject/pyslac/pyslac/examples/ev_slac_scapy.py:Sniffer captured mm_type: 0x6065
+DEBUG:/opt/VehicleSecProject/pyslac/pyslac/examples/ev_slac_scapy.py:Waiting for CM_SLAC_PARM.CNF...
+DEBUG:/opt/VehicleSecProject/pyslac/pyslac/examples/ev_slac_scapy.py:Found expected mm_type: 0x6065
+DEBUG:/opt/VehicleSecProject/pyslac/pyslac/examples/ev_slac_scapy.py:Received CM_SLAC_PARM.CNF
+  ★ CM_SLAC_PARM.CNF received from EVSE MAC: 88:FC:A6:1C:81:BB ✓
+  ★ EVSE IBE Identity confirmed: EVSE:88fca61c81bb
+
+
+===================================================================
+  [STEP 2]  PEV → Broadcast: CM_START_ATTEN_CHAR.IND
+===================================================================
+  ▶ Action    : EV announces start of attenuation measurement
+  ▶ Num Sounds: 2 MNBC sound bursts to follow
+  ▶ Timeout   : 10000 ms measurement window
+DEBUG:/opt/VehicleSecProject/pyslac/pyslac/examples/ev_slac_scapy.py:EV:Sending Attenuation Characterization Indication
+DEBUG:/opt/VehicleSecProject/pyslac/pyslac/examples/ev_slac_scapy.py:Sniffer captured mm_type: 0x606a
+DEBUG:/opt/VehicleSecProject/pyslac/pyslac/examples/ev_slac_scapy.py:EV:3: Sent Attenuation Characterization Indication
+  ▶ Status    : CM_START_ATTEN_CHAR.IND sent ✓
+===================================================================
+
+
+===================================================================
+  [STEP 3]  PEV → Broadcast/EVSE: MNBC Sounds + Attenuation Profiles
+===================================================================
+  ▶ Sending 2 MNBC sound bursts for PLC signal measurement
+DEBUG:/opt/VehicleSecProject/pyslac/pyslac/examples/ev_slac_scapy.py:EV:Sending MNBC Sound Indication
+DEBUG:/opt/VehicleSecProject/pyslac/pyslac/examples/ev_slac_scapy.py:Sniffer captured mm_type: 0x6076
+DEBUG:/opt/VehicleSecProject/pyslac/pyslac/examples/ev_slac_scapy.py:EV:4: Sent MNBC Sound Indication
+DEBUG:/opt/VehicleSecProject/pyslac/pyslac/examples/ev_slac_scapy.py:EV:Sending Attenuation Profile Indication
+DEBUG:/opt/VehicleSecProject/pyslac/pyslac/examples/ev_slac_scapy.py:Sniffer captured mm_type: 0x6086
+DEBUG:/opt/VehicleSecProject/pyslac/pyslac/examples/ev_slac_scapy.py:EV:Sent Attenuation Profile Indication
+  ▶ Sound 1 sent + Attenuation Profile 1 sent ✓
+DEBUG:/opt/VehicleSecProject/pyslac/pyslac/examples/ev_slac_scapy.py:EV:Sending MNBC Sound Indication
+DEBUG:/opt/VehicleSecProject/pyslac/pyslac/examples/ev_slac_scapy.py:Sniffer captured mm_type: 0x6076
+DEBUG:/opt/VehicleSecProject/pyslac/pyslac/examples/ev_slac_scapy.py:EV:4: Sent MNBC Sound Indication
+DEBUG:/opt/VehicleSecProject/pyslac/pyslac/examples/ev_slac_scapy.py:EV:Sending Attenuation Profile Indication
+DEBUG:/opt/VehicleSecProject/pyslac/pyslac/examples/ev_slac_scapy.py:Sniffer captured mm_type: 0x6086
+DEBUG:/opt/VehicleSecProject/pyslac/pyslac/examples/ev_slac_scapy.py:Sniffer captured mm_type: 0x606e
+DEBUG:/opt/VehicleSecProject/pyslac/pyslac/examples/ev_slac_scapy.py:EV:Sent Attenuation Profile Indication
+  ▶ Sound 2 sent + Attenuation Profile 2 sent ✓
+  ▶ Waiting for EVSE to send CM_ATTEN_CHAR.IND...
+DEBUG:/opt/VehicleSecProject/pyslac/pyslac/examples/ev_slac_scapy.py:Waiting for CM_ATTEN_CHAR.IND...
+DEBUG:/opt/VehicleSecProject/pyslac/pyslac/examples/ev_slac_scapy.py:Found expected mm_type: 0x606e
+DEBUG:/opt/VehicleSecProject/pyslac/pyslac/examples/ev_slac_scapy.py:Received CM_ATTEN_CHAR.IND
+  ▶ CM_ATTEN_CHAR.IND received from EVSE ✓
+===================================================================
+
+
+===================================================================
+  [STEP 4]  PEV → EVSE: CM_ATTEN_CHAR.RSP
+===================================================================
+  ▶ Action    : EV acknowledges attenuation data from EVSE
+  ▶ Result    : 0x00 — attenuation within acceptable threshold
+DEBUG:/opt/VehicleSecProject/pyslac/pyslac/examples/ev_slac_scapy.py:EV:6: Sent Attenuation Characterization Response
+DEBUG:/opt/VehicleSecProject/pyslac/pyslac/examples/ev_slac_scapy.py:Sniffer captured mm_type: 0x606f
+  ▶ Status    : CM_ATTEN_CHAR.RSP sent — proceeding to IBE ✓
+===================================================================
+
+DEBUG:/opt/VehicleSecProject/pyslac/pyslac/examples/ev_slac_scapy.py:EV:Starting IBE-based key establishment
+
+===================================================================
+  [STEP 6]  IBE KEY ESTABLISHMENT  (PEV Side)
+===================================================================
+  ▶ Method    : Boneh-Franklin IBE over bilinear pairing group SS512
+  ▶ Security  : BDH (Bilinear Diffie-Hellman) assumption
+
+  PKG (Private Key Generator):
+  ▶ PKG File  : /opt/VehicleSecProject/pyslac/ibe_master_secret.bin
+  ▶ Action    : Master secret s loaded from file
+  ▶ Public Key: P_pub = s * P  (known to all parties)
+
+  Identity Strings (derived from MAC addresses):
+  ▶ EV   ID   : EV:88fca61c81c2
+  ▶ EVSE ID   : EVSE:88fca61c81bb
+
+  Private Key Extraction (PEV):
+  ▶ Formula   : SK_EV = s × H('EV:88fca61c81c2')
+  ▶ H()       : hash-to-G1 (maps identity string to curve point)
+  ▶ SK Type   : Element (pairing.Element in G1)
+  ▶ Status    : EV private key extracted ✓
+
+  Bilinear Pairing Computation (PEV):
+  ▶ Formula   : shared = e(SK_EV, Q_EVSE)
+               = e(s×H(ID_EV), H(ID_EVSE))
+  ▶ By bilinearity this equals e(H(ID_EV), s×H(ID_EVSE))
+  ▶ Which equals the EVSE computation e(SK_EVSE, Q_EV)
+  ▶ Shared    : 333a696c4d306c76452b54497445735453342f72...  (174 bytes)
+  ▶ Status    : Pairing computed ✓
+
+  NMK Derivation:
+  ▶ Formula   : NMK = SHA256(shared || 'SLAC-IBE-NMK-v1'
+                             || run_id || ID_EV || ID_EVSE)[:16]
+  ▶ Run ID    : 0000000000000000
+  ▶ NMK       : 8d33a76f37096eb2e8e350af9c709aed  (16 bytes)
+  ▶ NID       : 2d4f7e5b294e05  (7 bytes, derived from NMK)
+
+  Security Properties:
+  ▶ Wire      : ZERO key material transmitted over PLC ✓
+  ▶ Compare   : ECDH sends 2 public key frames (0x6080 + 0x6083)
+  ▶ IBE       : 0 frames — non-interactive key establishment
+  ▶ Status    : NMK established successfully ✓
+===================================================================
+
+DEBUG:/opt/VehicleSecProject/pyslac/pyslac/examples/ev_slac_scapy.py:EV:IBE-based NMK established
+
+===================================================================
+  [STEP 5]  PEV → EVSE: CM_SLAC_MATCH.REQ
+===================================================================
+  ▶ Action    : EV requests final SLAC network matching
+  ▶ PEV  MAC  : 88:FC:A6:1C:81:C2
+  ▶ EVSE MAC  : 88:FC:A6:1C:81:BB
+  ▶ NMK       : 8d33a76f37096eb2e8e350af9c709aed
+DEBUG:/opt/VehicleSecProject/pyslac/pyslac/examples/ev_slac_scapy.py:EV:Starting Slac Match
+DEBUG:/opt/VehicleSecProject/pyslac/pyslac/examples/ev_slac_scapy.py:EV:9: Sending Slac Match Request
+DEBUG:/opt/VehicleSecProject/pyslac/pyslac/examples/ev_slac_scapy.py:Sniffer captured mm_type: 0x607c
+DEBUG:/opt/VehicleSecProject/pyslac/pyslac/examples/ev_slac_scapy.py:Sniffer captured mm_type: 0x607d
+  ▶ CM_SLAC_MATCH.REQ sent — waiting for CM_SLAC_MATCH.CNF...
+DEBUG:/opt/VehicleSecProject/pyslac/pyslac/examples/ev_slac_scapy.py:Waiting for CM_SLAC_MATCH.CNF...
+DEBUG:/opt/VehicleSecProject/pyslac/pyslac/examples/ev_slac_scapy.py:Found expected mm_type: 0x607d
+  ▶ CM_SLAC_MATCH.CNF received from EVSE ✓
+===================================================================
+
+
+===================================================================
+  SLAC + IBE HANDSHAKE COMPLETE  ✓
+===================================================================
+  ▶ PEV  MAC     : 88:FC:A6:1C:81:C2
+  ▶ EVSE MAC     : 88:FC:A6:1C:81:BB
+  ▶ NMK          : 8d33a76f37096eb2e8e350af9c709aed
+  ▶ NID          : 2d4f7e5b294e05
+
+  ▶ NMK Match    : Both EV and EVSE derived same NMK independently ✓
+  ▶ PLC Network  : Logical network established on QCA7000 chips ✓
+  ▶ Wire Traffic : ZERO IBE key material on wire ✓
+  ▶ Security     : Non-interactive IBE — no key exchange frames sent
+  ▶ Next Step    : ISO 15118-2 HLC charging communication begins
+===================================================================
+
+DEBUG:/opt/VehicleSecProject/pyslac/pyslac/examples/ev_slac_scapy.py:PEV-EVSE MATCHED Successfully!
