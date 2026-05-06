@@ -527,9 +527,9 @@ The full SLAC + IBC frame sequence:
 | 4 | CM_MNBC_SOUND.IND | PEV → Broadcast | Sound bursts for PLC attenuation measurement. |
 | 5 | CM_ATTEN_CHAR.IND | EVSE → PEV | EVSE sends averaged attenuation profile. |
 | 6 | CM_ATTEN_CHAR.RSP | PEV → EVSE | EV acknowledges. Both sides begin IBC locally. |
-| 7 | IBC Key Establishment | LOCAL | Both sides compute bilinear pairing independently. Zero frames sent. |
-| 8 | CM_SLAC_MATCH.REQ | PEV → EVSE | EV requests final SLAC matching. |
-| 9 | CM_SLAC_MATCH.CNF | EVSE → PEV | EVSE confirms. Session established. |
+|   | IBC Key Establishment | LOCAL | Both sides compute bilinear pairing independently. Zero frames sent. |
+| 7 | CM_SLAC_MATCH.REQ | PEV → EVSE | EV requests final SLAC matching. |
+| 8 | CM_SLAC_MATCH.CNF | EVSE → PEV | EVSE confirms. Session established. |
 
 ---
 
