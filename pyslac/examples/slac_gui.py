@@ -50,32 +50,57 @@ WIN98 = {
     "ok_col":      "#00FF00",
 }
 
-# ── SLAC Steps ───────────────────────────────────────────────
+# # ── SLAC Steps ───────────────────────────────────────────────
+# STEPS = [
+#     #("1",  "CM_SET_KEY",              "EVSE→Chip",  "existing"),
+#     ("1",  "CM_SLAC_PARM.REQ",        "PEV→EVSE",   "existing"),
+#     ("2",  "CM_SLAC_PARM.CNF",        "EVSE→PEV",   "existing"),
+#     ("3",  "CM_START_ATTEN_CHAR.IND", "PEV→BC",     "existing"),
+#     ("4",  "CM_MNBC_SOUND.IND",       "PEV→BC",     "existing"),
+#     ("5",  "CM_ATTEN_CHAR.IND",       "EVSE→PEV",   "existing"),
+#     ("6",  "CM_ATTEN_CHAR.RSP",       "PEV→EVSE",   "existing"),
+#     ("7",  "IBE KEY ESTABLISH",       "LOCAL",      "ibe"),
+#     ("8",  "CM_SLAC_MATCH.REQ",       "PEV→EVSE",   "existing"),
+#     ("9",  "CM_SLAC_MATCH.CNF",       "EVSE→PEV",   "existing"),
+# ]
+
+
 STEPS = [
-    #("1",  "CM_SET_KEY",              "EVSE→Chip",  "existing"),
     ("1",  "CM_SLAC_PARM.REQ",        "PEV→EVSE",   "existing"),
     ("2",  "CM_SLAC_PARM.CNF",        "EVSE→PEV",   "existing"),
     ("3",  "CM_START_ATTEN_CHAR.IND", "PEV→BC",     "existing"),
     ("4",  "CM_MNBC_SOUND.IND",       "PEV→BC",     "existing"),
     ("5",  "CM_ATTEN_CHAR.IND",       "EVSE→PEV",   "existing"),
     ("6",  "CM_ATTEN_CHAR.RSP",       "PEV→EVSE",   "existing"),
-    ("7",  "IBE KEY ESTABLISH",       "LOCAL",      "ibe"),
-    ("8",  "CM_SLAC_MATCH.REQ",       "PEV→EVSE",   "existing"),
-    ("9",  "CM_SLAC_MATCH.CNF",       "EVSE→PEV",   "existing"),
+    ("7",  "CM_SLAC_MATCH.REQ",       "PEV→EVSE",   "existing"),
+    ("8",  "CM_SLAC_MATCH.CNF",       "EVSE→PEV",   "existing"),
 ]
 
-# ── Step trigger keywords ────────────────────────────────────
+
+# # ── Step trigger keywords ────────────────────────────────────
+# STEP_TRIGGERS = {
+#     #"CM_SET_KEY: Finished":               0,
+#     "Sent Param Request":                 0,
+#     "Sent SLAC_PARM.CNF":                 1,
+#     "Sent Attenuation Characterization Indication": 2,
+#     "Sent MNBC Sound Indication":         3,
+#     "Sent ATTEN_CHAR.IND":                4,
+#     "Sent Attenuation Characterization Response": 5,
+#     "IBE KEY ESTABLISHMENT":              6,
+#     "Sending Slac Match":                 7,
+#     "Sent CM_SLAC_MATCH.CNF":             8,
+# }
+
+
 STEP_TRIGGERS = {
-    #"CM_SET_KEY: Finished":               0,
-    "Sent Param Request":                 0,
-    "Sent SLAC_PARM.CNF":                 1,
+    "Sent Param Request":                           0,
+    "Sent SLAC_PARM.CNF":                           1,
     "Sent Attenuation Characterization Indication": 2,
-    "Sent MNBC Sound Indication":         3,
-    "Sent ATTEN_CHAR.IND":                4,
-    "Sent Attenuation Characterization Response": 5,
-    "IBE KEY ESTABLISHMENT":              6,
-    "Sending Slac Match":                 7,
-    "Sent CM_SLAC_MATCH.CNF":             8,
+    "Sent MNBC Sound Indication":                   3,
+    "Sent ATTEN_CHAR.IND":                          4,
+    "Sent Attenuation Characterization Response":   5,
+    "Sending Slac Match":                           6,
+    "Sent CM_SLAC_MATCH.CNF":                       7,
 }
 
 
@@ -169,6 +194,9 @@ class SLACDemoApp:
         self._build_title_bar()
         self._build_main()
         self.root.protocol("WM_DELETE_WINDOW", self._on_close)
+
+
+
 
     # ── Title Bar ────────────────────────────────────────────
     def _build_title_bar(self):
@@ -345,6 +373,33 @@ class SLACDemoApp:
                            fill="#FFFFCC", outline="", tags="flash")
         c.after(300, lambda: c.delete("flash"))
 
+    
+    
+    def _show_ibc_local(self):
+        c = self.diag
+        PEV_X  = self.PEV_X
+        EVSE_X = self.EVSE_X
+        # Find y position between step 5 (idx 5) and step 6 (idx 6)
+        y = (self._step_y[5] + self._step_y[6]) // 2
+
+        # PEV side box
+        c.create_rectangle(PEV_X-45, y-16, PEV_X+45, y+16,
+                        fill="#fff0f0", outline="#9E1B32", width=2)
+        c.create_text(PEV_X, y-5, text="IBC Key",
+                    font=("MS Sans Serif", 7, "bold"), fill="#9E1B32")
+        c.create_text(PEV_X, y+6, text="Establishment",
+                    font=("MS Sans Serif", 7, "bold"), fill="#9E1B32")
+
+        # EVSE side box
+        c.create_rectangle(EVSE_X-45, y-16, EVSE_X+45, y+16,
+                        fill="#fff0f0", outline="#9E1B32", width=2)
+        c.create_text(EVSE_X, y-5, text="IBC Key",
+                    font=("MS Sans Serif", 7, "bold"), fill="#9E1B32")
+        c.create_text(EVSE_X, y+6, text="Establishment",
+                    font=("MS Sans Serif", 7, "bold"), fill="#9E1B32")
+    
+    
+    
     def _show_matched(self):
         c = self.diag
         c.create_rectangle(self.PEV_X-55, 378, self.EVSE_X+55, 398,
@@ -667,6 +722,7 @@ class SLACDemoApp:
             self.evse_led_c.itemconfig(self._evse_led, fill="#00CC00")
 
             for line in self.evse_proc.stdout:
+                
                 line = line.rstrip()
                 if not line:
                     continue
@@ -687,6 +743,8 @@ class SLACDemoApp:
                 # Check step triggers
                 for trigger, step_idx in STEP_TRIGGERS.items():
                     if trigger in line:
+                        if "IBC KEY ESTABLISHMENT" in line or "IBE KEY ESTABLISHMENT" in line:
+                            self.root.after(0, self._show_ibc_local)
                         self.root.after(0, lambda i=step_idx: self._activate_step(i))
                         break
 
