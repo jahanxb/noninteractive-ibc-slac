@@ -45,10 +45,15 @@ logger = logging.getLogger(__file__)
 BROADCAST_ADDR = "FF:FF:FF:FF:FF:FF"
 PEV_MAC  = "88:FC:A6:1C:81:C2"
 EVSE_MAC = "88:FC:A6:1C:81:BB"
-IFACE    = "enp0s31f6"
+IFACE    = "eno1"
 
 ev_nmk = None
 ev_nid = None
+
+# Retransmission of CM_SLAC_PARM.REQ. The product of these two stays within the
+# EVSE's 20 s CM_SLAC_PARM listening window.
+SLAC_PARM_ATTEMPTS = 5
+SLAC_PARM_RETRY_TIMEOUT = 4
 
 # ── Banner helper ────────────────────────────────────────────
 W = 67
@@ -437,9 +442,19 @@ def run():
     print(f"  └{'─'*61}┘")
     banner_end()
 
-    paramRequest()
-    logger.debug("Waiting for CM_SLAC_PARM.CNF...")
-    cnf = wait_for(CM_SLAC_PARM | MMTYPE_CNF, timeout=20)
+    # The EVSE tears down and rebuilds its socket on entry to CM_SLAC_PARM, so a
+    # single REQ can be dropped if it lands in that window. Retransmit until the
+    # CNF comes back, within the EVSE's listening window.
+    cnf = None
+    for attempt in range(1, SLAC_PARM_ATTEMPTS + 1):
+        paramRequest()
+        logger.debug(
+            f"Waiting for CM_SLAC_PARM.CNF... "
+            f"(attempt {attempt}/{SLAC_PARM_ATTEMPTS})"
+        )
+        cnf = wait_for(CM_SLAC_PARM | MMTYPE_CNF, timeout=SLAC_PARM_RETRY_TIMEOUT)
+        if cnf:
+            break
     if not cnf:
         sniffer.stop()
         logger.error("No CM_SLAC_PARM.CNF - aborting")

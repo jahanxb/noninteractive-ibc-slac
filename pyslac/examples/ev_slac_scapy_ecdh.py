@@ -47,7 +47,7 @@ BROADCAST_ADDR = "FF:FF:FF:FF:FF:FF"
 # CHANGE TO (correct - uses real board MACs)
 PEV_MAC  = "88:FC:A6:1C:81:C2"   # Board1 real MAC
 EVSE_MAC = "88:FC:A6:1C:81:BB"   # Board2 real MAC
-IFACE = "enp0s31f6"
+IFACE = "eno1"
 
 
 class HomePlugHeader(Packet):

@@ -14,8 +14,8 @@ class IBEKeyEstablishment:
     def __init__(
         self,
         group_name: str = "SS512",
-        master_secret_file: str = "/opt/VehicleSecProject/slac_dylan_ddh/pyslac/ibe_master_secret.bin",
-        generator_file: str = "/opt/VehicleSecProject/slac_dylan_ddh/pyslac/ibe_generator.bin",
+        master_secret_file: str = "/home/jack/projects/noninteractive-ibc-slac/ibe_master_secret.bin",
+        generator_file: str = "/home/jack/projects/noninteractive-ibc-slac/ibe_generator.bin",
     ) -> None:
         self.group_name = group_name
         self.group = PairingGroup(group_name)

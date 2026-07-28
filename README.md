@@ -93,10 +93,15 @@ Both boards are powered via Micro-USB cables connected to USB ports on the host 
 
 ### Ethernet
 
-**Board 1 (PEV):** Connect the RJ45/J2 Ethernet port directly to the host PC's built-in Ethernet interface (`enp0s31f6` in the reference setup).
+**Board 1 (PEV):** Connect the RJ45/J2 Ethernet port directly to the host PC's built-in Ethernet interface (`eno1` in the reference setup).
 
-**Board 2 (EVSE):** The EVSE board is reachable through the PLC link established over the J3 twisted-pair wire. It does not need a separate Ethernet connection to the host. But we have given PC to board2, second Ethernet interface (`enxa0cec837bab6` in the reference setup. a USB-C 
-Ethernet dongle). The host runs the EVSE Python process over this interface using raw Layer 2 sockets to communicate with the EVSE board's QCA7000 chip.
+**Board 2 (EVSE):** Connect the RJ45/J2 Ethernet port to a second host interface (`enxa0cec837bab6` in the reference setup, a USB-C Ethernet dongle). This link is used to query the EVSE board directly with `plctool`.
+
+**Important — which interface each process uses.** Both Python processes (`single_slac_session.py` and `ev_slac_scapy.py`) run on the **same** interface, `eno1`. They exchange SLAC frames with each other over that one segment using raw Layer 2 sockets.
+
+This is not an oversight, and configuring the EVSE process onto the dongle will not work. `pyslac/session.py` hardcodes the EVSE board's own MAC (`88:FC:A6:1C:81:BB`) as the Ethernet source address of every frame it sends. A QCA7000 silently discards any frame whose source MAC equals its own address, so pointing the EVSE process at the dongle makes the EVSE board ignore `CM_SET_KEY.REQ` entirely and the session aborts with `SetKey Timeout raised`.
+
+A consequence worth stating plainly for anyone reproducing this work: because both endpoints sit on one Ethernet segment, **the SLAC frames do not traverse the powerline.** The PLC link is established and verifiable, but the protocol exchange itself is host-local. This setup demonstrates the protocol logic and the identity-based key agreement; it is not a measurement of SLAC over PLC.
 
 
 ### PLC Wire (J3 Screw Terminals)
@@ -121,7 +126,7 @@ After connecting the J3 wire:
 Verify the PLC link speed after pairing:
 
 ```bash
-sudo plctool -i enp0s31f6 -m 88:FC:A6:1C:81:C2
+sudo plctool -i eno1 -m 88:FC:A6:1C:81:C2
 ```
 
 Expected output includes `AvgPHYDR_TX = 009 mbps`.
@@ -132,12 +137,19 @@ Expected output includes `AvgPHYDR_TX = 009 mbps`.
 
 The reference host PC has two network interfaces:
 
-| Interface | Connection |
-|---|---|
-| `enp0s31f6` | Built-in Ethernet, connected directly to Board 1 (PEV) |
-| `enxa0cec837bab6` | USB-C Ethernet dongle, connected directly to Board 2 (EVSE) |
+| Interface | Connection | Used by |
+|---|---|---|
+| `eno1` | Built-in Ethernet, connected directly to Board 1 (PEV) | **both** Python processes, and `plctool` queries of the PEV board |
+| `enxa0cec837bab6` | USB-C Ethernet dongle, connected directly to Board 2 (EVSE) | `plctool` queries of the EVSE board only |
 
-Your interface name will differ. Find it with `ip link` and use it wherever `enp0s31f6` appears in commands and configuration files.
+Your interface name will differ. Find it with `ip link` and use it wherever `eno1` appears in commands and configuration files.
+
+Both interfaces must show a carrier before you start. Verify with:
+
+```bash
+ip -br link show          # both should read UP
+cat /sys/class/net/eno1/carrier   # expect 1
+```
 
 Verify both boards are reachable:
 
@@ -149,7 +161,7 @@ ping 192.168.0.12   # EVSE board
 Query board hardware directly using plctool:
 
 ```bash
-sudo plctool -i enp0s31f6 -I 88:FC:A6:1C:81:C2
+sudo plctool -i eno1 -I 88:FC:A6:1C:81:C2
 sudo plctool -i enxa0cec837bab6 -I 88:FC:A6:1C:81:BB
 ```
 
@@ -231,7 +243,7 @@ Expected output:
 
 ### Network Interface and Board MAC Addresses
 
-Open `pyslac/examples/cs_configuration.json` and set your interface name:
+Open `pyslac/examples/cs_configuration.json` and set your interface name. **This must be the interface wired to the PEV board, and it must match `IFACE` in `ev_slac_scapy.py` exactly** — the two processes have to share one segment to hear each other. Setting this to the EVSE board's interface is the single most common way to break the demo:
 
 ```json
 {
@@ -239,7 +251,7 @@ Open `pyslac/examples/cs_configuration.json` and set your interface name:
   "parameters": [
     {
       "evse_id": "DE*SWT*E123456789",
-      "network_interface": "ADD_NETWORK_INTERFACE"
+      "network_interface": "eno1"
     }
   ]
 }
@@ -250,7 +262,7 @@ Open `pyslac/examples/ev_slac_scapy.py` and set your board MAC addresses and int
 ```python
 PEV_MAC  = "XX:XX:XX:XX:XX:XX"   # MAC address of your PEV board
 EVSE_MAC = "XX:XX:XX:XX:XX:XX"   # MAC address of your EVSE board
-IFACE    = "enp0s31f6"            # Your Ethernet interface name
+IFACE    = "eno1"            # Your Ethernet interface name
 ```
 
 Open `pyslac/session.py` and set the EVSE board MAC:
@@ -262,7 +274,7 @@ host_mac = "XX:XX:XX:XX:XX:XX"   # MAC address of your EVSE board
 Open `slac_gui.py` and update these constants at the top:
 
 ```python
-IFACE      = "enp0s31f6"            # Your interface name
+IFACE      = "eno1"            # Your interface name
 BOARD_PEV  = "XX:XX:XX:XX:XX:XX"   # PEV board MAC
 BOARD_EVSE = "XX:XX:XX:XX:XX:XX"   # EVSE board MAC
 ```
@@ -280,45 +292,54 @@ LOG_LEVEL=DEBUG
 
 ## Running the Protocol
 
-**The board reset in Step 1 is mandatory before every session.** The EVSE runs `evse_set_key()` at startup which reprograms the QCA7000 with a new random NMK. If the boards were previously paired with a different NMK, the PLC link will break and SLAC frames will not be received. Always reset and re-pair before each run.
+**You do not need to reset the boards between runs.** The demo has been verified over repeated consecutive runs with the PLC link intact throughout — same NID, same 9 Mbps, station count never dropping. Reset only for initial pairing, or if `plctool -m` shows the boards are no longer on a shared network.
 
-### Step 1: Reset Both Boards and Delete IBE Key Files
+**Never delete `ibe_master_secret.bin` or `ibe_generator.bin`.** See Step 1.
+
+### Step 1: One-Time Setup — Generate IBE Keys and Pair the Boards
+
+The IBE master secret and generator are long-lived Private Key Generator material, equivalent to a CA key. Both the PEV and the EVSE must read the **same** files — that shared material is precisely what allows each side to derive the session key locally with nothing sent over the wire.
+
+Generate them **once**, with both processes stopped:
 
 ```bash
-# Factory reset both boards
-sudo plctool -i enxa0cec837bab6 -T XX:XX:XX:XX:XX:XX   # EVSE MAC
-sudo plctool -i enp0s31f6 -T XX:XX:XX:XX:XX:XX   # PEV MAC
-
-# Delete IBE key files — forces fresh key generation each run
-rm -f ibe_master_secret.bin ibe_generator.bin
-
-# Wait 60 seconds for boards to auto-pair, then verify link
-sudo plctool -i enp0s31f6 -m XX:XX:XX:XX:XX:XX   # PEV MAC
-# Expected: AvgPHYDR_TX = 009 mbps
+cd /home/jack/projects/noninteractive-ibc-slac
+venv/bin/python pyslac/ibe_key_establishment.py
+# prints matching EV and EVSE NMKs, and writes the two .bin files
 ```
+
+> **Do not delete these files before a run.** If they are missing, both processes start within seconds of each other, both find no key material, and both generate a *different* random master secret — so the two sides derive different NMKs and key agreement fails. Deleting them is the most reliable way to break this demo, not to fix it.
+
+Pair the boards only if they are not already on a shared PLC network:
+
+```bash
+sudo plctool -i enxa0cec837bab6 -T 88:FC:A6:1C:81:BB   # EVSE MAC — factory reset
+sudo plctool -i eno1            -T 88:FC:A6:1C:81:C2   # PEV MAC  — factory reset
+# wait 60 seconds for the boards to auto-pair, then verify:
+sudo plctool -i eno1 -m 88:FC:A6:1C:81:C2
+```
+
+A healthy link reports `STATIONS = 1` and `AvgPHYDR_TX = 009 mbps` on both boards, with the same `NID` on each. This check is read-only and safe to repeat any time.
 
 ### Step 2: Start EVSE (Terminal 1)
 
 ```bash
-cd /path/to/ibe-slac
-sudo venv/bin/python pyslac/examples/single_slac_session.py
+cd /home/jack/projects/noninteractive-ibc-slac
+sudo venv/bin/python -u pyslac/examples/single_slac_session.py
 ```
 
-Wait until the terminal prints:
+The `cd` matters. The scripts locate `cs_configuration.json` relative to themselves, but the virtual environment and the IBE key files are per-directory — running from a different copy of the project is a common and confusing failure.
 
-```
-CP State B : EVSE waiting for CM_SLAC_PARM.REQ...
-```
-
-The EVSE takes approximately 12 seconds to initialize. Do not start the EV until this line appears.
-
-### Step 3: Start EV (Terminal 2)
+### Step 3: Start EV (Terminal 2), within 30 seconds
 
 ```bash
-sudo venv/bin/python pyslac/examples/ev_slac_scapy.py
+cd /home/jack/projects/noninteractive-ibc-slac
+sudo venv/bin/python -u pyslac/examples/ev_slac_scapy.py
 ```
 
-The full handshake runs automatically. Both terminals will display the IBE key establishment details and the derived NMK. Verify that the NMK printed on both sides is identical.
+**Timing is the one thing to get right.** Start the EV within roughly 30 seconds of the EVSE. The EVSE's matching window opens about 30 s after launch and closes about 92 s in, while the EV itself waits `SLAC_SETTLE_TIME` (30 s) before sending its first frame. Starting the EV too late means its first frame arrives after the window has closed, which looks like a protocol failure but is only a timing miss. Anywhere in the first 30 seconds is comfortable.
+
+The full handshake then runs automatically. Both terminals display the IBE key establishment details and the derived NMK. Verify that the NMK printed on both sides is identical.
 
 The terminal output samples are given in folder output_samples/single_slac_session.txt and slac_scapy.txt
 
@@ -333,7 +354,9 @@ The GUI automates the full workflow and provides an animated sequence diagram sh
 sudo python slac_gui.py
 ```
 
-**Panel 1 — Board Reset:** Click "Reset Boards". The GUI factory resets both QCA7000 boards, deletes IBE key files, waits 60 seconds for boards to auto-pair, then verifies the PLC link speed. A progress bar shows the countdown.
+**Panel 1 — Board Reset:** ⚠️ **Do not use this for a normal demo.** "Reset Boards" factory resets both QCA7000 boards *and deletes the IBE key files*. The deletion causes the two processes to generate different master secrets, so key agreement fails on the next run (see "NMK values differ" in Troubleshooting). Use it only for initial pairing, and regenerate the key files afterwards with `venv/bin/python pyslac/ibe_key_establishment.py`.
+
+For a normal demo, go straight to Panel 2. The Run path is entirely independent of Reset and leaves the boards' pairing untouched.
 
 **Panel 2 — Run SLAC+IBE:** Click "Start Session". The GUI starts the EVSE process, waits 15 seconds for chip initialization, then starts the EV process. The sequence diagram on the left animates each protocol step as it is logged. The IBE step shows a highlighted box labelled "IBE — NO WIRE TRAFFIC" between the attenuation and match steps.
 
@@ -370,7 +393,7 @@ eth.type == 0x88e1
 ### Capture to File
 
 ```bash
-sudo tshark -i enp0s31f6 -f "ether proto 0x88e1" -w capture.pcap
+sudo tshark -i eno1 -f "ether proto 0x88e1" -w capture.pcap
 ```
 
 The dissector labels each frame with its SLAC step, direction, and a description of what it carries. For `CM_SLAC_MATCH.CNF` it shows the NMK field with a note explaining that the real NMK is never transmitted.
@@ -421,6 +444,43 @@ SLAC + IBE HANDSHAKE COMPLETE
 PEV-EVSE MATCHED Successfully!
 ```
 
+### A Retried `CM_SLAC_PARM.REQ` Is Normal
+
+You will routinely see this in the EV terminal, and it is **not** a failure:
+
+```
+Waiting for CM_SLAC_PARM.CNF... (attempt 1/5)
+Timeout waiting for mm_type 0x6065
+Waiting for CM_SLAC_PARM.CNF... (attempt 2/5)
+```
+
+On entering `CM_SLAC_PARM` the EVSE closes and reopens its raw socket (`reset_socket()`). Both sides come out of their 30-second settle at almost the same instant — measured at 19 ms apart — so the EV's first `CM_SLAC_PARM.REQ` reliably lands in that reopen window and is dropped. The EV now retransmits, and attempt 2 succeeds. ISO 15118-3 expects this frame to be retransmitted in any case.
+
+Only treat it as a fault if all five attempts are exhausted.
+
+### The Derived NMK Is Deterministic
+
+For a fixed pair of board MAC addresses and a fixed master secret, the derived NMK is **the same on every run**. In the reference setup it is always:
+
+```
+NMK = 00890bf2acfaac9f7be8b63d5666cc53
+NID = d79841200e4807
+```
+
+This is not caching. `derive_nmk()` is called with `run_id = bytes(8)`, a hardcoded all-zero value, and the `run_id` field is likewise left at zero in `CM_SLAC_PARM.REQ` — which is why the EVSE logs `Run ID: b'\x00\x00\x00\x00\x00\x00\x00\x00'`. The NMK itself is not all zeros; it is a normal pseudorandom SHA-256 output whose leading byte happens to be `00`.
+
+**Security implication, stated explicitly.** Because the run ID never varies, there is no per-session key freshness: every charging session between the same two boards reuses one static NMK. Anyone who recovers that key once — via a compromised board, an extracted identity private key, or a side channel — can decrypt every past and future session between that pair. The claim that no key material appears on the wire remains true; the claim of a fresh session key does not. The derivation itself is sound and separates keys correctly on both identity and run ID:
+
+| Varied input | Derived NMK |
+|---|---|
+| `run_id = 0000000000000000` | `00890bf2acfaac9f7be8b63d5666cc53` |
+| `run_id = 0000000000000001` | `bd70214091d52904fa167b700d33f99d` |
+| `run_id = a1b2c3d4e5f60718` | `6ce5479b6d5ecbf1d46f3ba232f6eca2` |
+| different EV identity | `33891e2c6afc2092dade9e79f5cbb75b` |
+| different EVSE identity | `684b9357f15ca39e59ba30f33ce859f6` |
+
+To obtain genuine session freshness, have the EV generate a random 8-byte `run_id` into `CM_SLAC_PARM.REQ` — the purpose ISO 15118-3 defines for that field — and pass the received value into `derive_nmk()` on both sides in place of `bytes(8)`. Both sides already carry it; the EVSE parses and logs it today.
+
 ### Protocol Frame Count
 
 | Protocol | Total Frames | Extra Key Frames | Key Material on Wire |
@@ -458,17 +518,42 @@ sudo pip install "marshmallow>=3.0.0,<4.0.0" --break-system-packages --force-rei
 
 The interface name in `cs_configuration.json` or `ev_slac_scapy.py` does not match your system. Run `ip link` to find the correct name.
 
-**EVSE times out waiting for `CM_SLAC_PARM.REQ`**
+**EVSE times out waiting for `CM_SLAC_PARM.REQ`, or EV reports `No CM_SLAC_PARM.CNF - aborting`**
 
-The EV was started before the EVSE finished chip initialization. The EVSE needs approximately 12 seconds after printing `CM_SET_KEY: Finished!` before it is ready. Wait for the `EVSE waiting for CM_SLAC_PARM.REQ` message before starting the EV.
+Check these in order:
 
-**`Timeout waiting for CM_SLAC_PARM.CNF`**
+1. **Interface mismatch.** `network_interface` in `cs_configuration.json` must equal `IFACE` in `ev_slac_scapy.py`. If the EVSE is pointed at the EVSE board's interface, it cannot hear the EV at all. This is the most frequent cause.
+2. **Timing.** The EV must be started within ~30 s of the EVSE. Later than that and the matching window has already closed.
+3. **All 5 retry attempts exhausted.** A single dropped attempt is normal (see "A Retried `CM_SLAC_PARM.REQ` Is Normal"). Five failures means the EVSE is not listening on the same segment.
 
-The boards lost their PLC pairing because `evse_set_key()` programmed a new random NMK into the chip. Perform the full board reset procedure (Step 1) and wait for the 60-second settle period before running again.
+A single `Timeout waiting for mm_type 0x6065` followed by `attempt 2/5` is expected behaviour and needs no action.
 
-**PLC LED goes off during session**
+**`SetKey Timeout raised` — PLC chip initialization failed**
 
-This is expected. `evse_set_key()` resets the NMK on the QCA7000 chip at the start of each session, which drops the PLC pairing. The LED will go solid again after the SLAC match completes. To restore the pairing after running, press the PAIR button on both boards.
+The EVSE process is on an interface wired to a board whose MAC equals the source address hardcoded in `session.py` (`88:FC:A6:1C:81:BB`). A QCA7000 discards frames that appear to originate from itself, so it never answers `CM_SET_KEY.REQ`. Point `network_interface` in `cs_configuration.json` back at the PEV board's interface (`eno1`).
+
+You can confirm a board is alive and which source addresses it will answer without changing any board state:
+
+```bash
+sudo plctool -i eno1 -I 88:FC:A6:1C:81:C2            # PEV board identity
+sudo plctool -i enxa0cec837bab6 -I 88:FC:A6:1C:81:BB # EVSE board identity
+```
+
+**PLC LED blinking slowly / link lost**
+
+Slow blinking means the boards are not on a shared powerline network. Confirm with `plctool -m` on both boards: a healthy link shows the same `NID` on each, `STATIONS = 1`, and `AvgPHYDR_TX = 009 mbps`. If either board reports `Found 0 Network(s)` or `STATIONS = 0`, re-pair using the reset procedure in Step 1.
+
+Note that in the working configuration a normal run does **not** drop the pairing, because the EVSE's `CM_SET_KEY.REQ` is ignored by the board it is addressed to. If the LEDs go slow-blink after a run, the interface configuration has probably been changed.
+
+**Edits to `pyslac/*.py` appear to have no effect**
+
+The virtual environment may contain a second copy of the package that shadows your working tree. Running a script from `pyslac/examples/` puts that directory on `sys.path`, not the repository root, so `import pyslac` resolves through site-packages. Check where it actually resolves:
+
+```bash
+cat venv/lib/python3.*/site-packages/pyslac.pth
+```
+
+It must contain the repository root. If it points somewhere else (for example `venv/src/pyslac`), that stale copy is what runs. A give-away is a traceback citing file paths that no longer exist in your tree. Fix by writing the repository root into that `.pth` file, and delete the stale checkout so it cannot shadow again.
 
 **`error: uninstall-no-record-file for cryptography`**
 
@@ -478,10 +563,16 @@ sudo pip install -e . --break-system-packages --ignore-installed cryptography
 
 **NMK values differ between EV and EVSE**
 
-The IBE key files (`ibe_master_secret.bin`, `ibe_generator.bin`) were not deleted before the run. One side loaded a stale master secret. Delete the files and run again:
+The two sides are reading different master secrets. The usual cause is that `ibe_master_secret.bin` and `ibe_generator.bin` were **deleted** before the run: both processes then start seconds apart, both find no key material, and each generates its own random master secret.
+
+Do not delete these files. Regenerate them once, with both processes stopped, and leave them in place:
+
 ```bash
-rm -f ibe_master_secret.bin ibe_generator.bin
+venv/bin/python pyslac/ibe_key_establishment.py
+# prints matching EV and EVSE NMKs plus "Match: True"
 ```
+
+Also confirm both sides resolve the same key files — `pyslac/ibe_key_establishment.py` holds absolute paths in its constructor defaults, and a stale copy of the package (see above) will point at a different location or one that no longer exists.
 
 ---
 

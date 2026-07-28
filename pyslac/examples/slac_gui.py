@@ -14,13 +14,13 @@ import os
 import sys
 
 # ── Paths ────────────────────────────────────────────────────
-PROJECT_DIR  = "/opt/VehicleSecProject/slac_dylan_ddh/pyslac"
+PROJECT_DIR  = "/home/jack/projects/noninteractive-ibc-slac"
 VENV_PYTHON  = f"{PROJECT_DIR}/venv/bin/python"
 EVSE_SCRIPT  = f"{PROJECT_DIR}/pyslac/examples/single_slac_session.py"
 PEV_SCRIPT   = f"{PROJECT_DIR}/pyslac/examples/ev_slac_scapy.py"
 IBE_SECRET   = f"{PROJECT_DIR}/ibe_master_secret.bin"
 IBE_GENERATOR= f"{PROJECT_DIR}/ibe_generator.bin"
-IFACE        = "enp0s31f6"
+IFACE        = "eno1"
 BOARD_PEV    = "88:FC:A6:1C:81:C2"
 BOARD_EVSE   = "88:FC:A6:1C:81:BB"
 

@@ -52,7 +52,7 @@ class Timers(float, Enum):
     # This Timer is actually set in the environment.py, for debugging and
     # development reasons, allowing a easier setting of the time with the
     # docker-compose.dev.yml
-    SLAC_INIT_TIMEOUT = 50.0  # [TT_EVSE_SLAC_init=20 s - 50 s]
+    SLAC_INIT_TIMEOUT = 120.0  # [TT_EVSE_SLAC_init=20 s - 50 s]
 
     # Timeout for the reception of either CM_VALIDATE.REQ or CM_SLAC_MATCH.REQ
     # message, after reception of CM_ATTEN_CHAR.RSP
@@ -163,7 +163,7 @@ SLAC_GROUPS = 58
 SLAC_LIMIT = 40
 # Time to await after reception of a successful CM_SET_KEY.CNF
 # This timer is used and defined in the Qualcomm example
-SLAC_SETTLE_TIME = 10
+SLAC_SETTLE_TIME = 30 #10
 
 ETHER_ADDR_LEN = 6
 BROADCAST_ADDR = b"\xFF" * 6

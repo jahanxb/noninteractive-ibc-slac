@@ -45,7 +45,7 @@ logger = logging.getLogger(__file__)
 BROADCAST_ADDR = "FF:FF:FF:FF:FF:FF"
 PEV_MAC  = "88:FC:A6:1C:81:C2"
 EVSE_MAC = "88:FC:A6:1C:81:BB"
-IFACE    = "enp0s31f6"
+IFACE    = "eno1"
 
 ev_nmk = None
 ev_nid = None

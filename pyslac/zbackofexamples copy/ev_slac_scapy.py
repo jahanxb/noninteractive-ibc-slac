@@ -39,7 +39,7 @@ logger = logging.getLogger(__file__)
 
 BROADCAST_ADDR = "FF:FF:FF:FF:FF:FF"
 ATHEROS_CHIP_MAC = "00:b0:52:00:00:01"
-IFACE = "enp0s31f6"
+IFACE = "eno1"
 
 
 class HomePlugHeader(Packet):
