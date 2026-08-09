@@ -68,7 +68,7 @@ from pyslac.sockets.async_linux_socket import (
     sendeth,
 )
 from pyslac.utils import cancel_task, generate_nid, get_if_hwaddr
-from pyslac.ibe_key_establishment import IBEKeyEstablishment
+from pyslac.ibe_key_establishment import CertificatelessKeyEstablishment
 from pyslac.utils import half_round as hw
 from pyslac.utils import task_callback, time_now_ms
 
@@ -142,18 +142,35 @@ class SlacEvseSession(SlacSession):
         self.iface = iface
         self.evse_id = evse_id
         self.config = config
-        host_mac = "88:FC:A6:1C:81:BB"  # Board2 EVSE real MAC
+        evse_board_mac = "88:FC:A6:1C:81:BB"  # EVSE board's actual MAC on PLC
+        evse_device_iface = "enxa0cec837bab6"  # Interface where EVSE board is connected
+
         logger.debug(
             f"Session created for evse_id {self.evse_id} on interface {self.iface}"
         )
+
+        # Socket for SLAC handshake on eno1
         self.socket = create_socket(iface=self.iface, port=0)
+        self.slac_mac = get_if_hwaddr(self.iface)  # MAC of eno1 interface
+
+        # Socket for SetKey to EVSE board on enxa0cec837bab6
+        self.setkey_socket = create_socket(iface=evse_device_iface, port=0)
+        self.setkey_iface = evse_device_iface
+        self.setkey_mac = get_if_hwaddr(evse_device_iface)  # MAC of enxa0cec837bab6
+
         self.evse_plc_mac = EVSE_PLC_MAC
+        self.evse_board_mac = bytes.fromhex(evse_board_mac.replace(":", ""))
+
         SlacSession.__init__(self, state=STATE_UNMATCHED,
-                             evse_mac=bytes.fromhex(host_mac.replace(":", "")))
+                             evse_mac=self.evse_board_mac)  # Use BOARD MAC for identity (IBE)
 
     def reset_socket(self):
         self.socket.close()
         self.socket = create_socket(iface=self.iface, port=0)
+
+    def reset_setkey_socket(self):
+        self.setkey_socket.close()
+        self.setkey_socket = create_socket(iface=self.setkey_iface, port=0)
 
     async def send_frame(self, frame_to_send: bytes) -> None:
         bytes_sent = sendeth(
@@ -172,14 +189,33 @@ class SlacEvseSession(SlacSession):
         await self.evse_set_key()
         self.reset()
 
-    async def evse_set_key(self) -> bytes:
+    async def evse_set_key(self, nmk: bytes = None, use_device_iface: bool = False) -> bytes:
+        """Program EVSE board with NMK via SetKey command.
+
+        Args:
+            nmk: NMK to program. If None, generates random NMK.
+            use_device_iface: If True, send via enxa0cec837bab6 to reach EVSE board.
+                            If False, send via eno1 (for initial bootstrap).
+        """
         logger.info("CM_SET_KEY: Started...")
-        nmk = urandom(16)
+        if nmk is None:
+            nmk = urandom(16)
         nid = generate_nid(nmk)
         logger.debug("New NMK: %s", hexlify(nmk))
         logger.debug("New NID: %s", hexlify(nid))
+
+        # Choose socket and source MAC based on which interface to use
+        if use_device_iface:
+            socket_to_use = self.setkey_socket
+            iface_to_use = self.setkey_iface
+            src_mac = self.setkey_mac
+        else:
+            socket_to_use = self.socket
+            iface_to_use = self.iface
+            src_mac = self.slac_mac
+
         ethernet_header = EthernetHeader(
-            dst_mac=self.evse_plc_mac, src_mac=self.evse_mac
+            dst_mac=self.evse_board_mac, src_mac=src_mac
         )
         homeplug_header = HomePlugHeader(CM_SET_KEY | MMTYPE_REQ)
         key_req_payload = SetKeyReq(nid=nid, new_key=nmk)
@@ -189,10 +225,13 @@ class SlacEvseSession(SlacSession):
             + key_req_payload.pack_big()
         )
         try:
-            await self.send_frame(frame_to_send)
-            data_rcvd = await self.rcv_frame(
-                rcv_frame_size=FramesSizes.CM_SET_KEY_CNF,
-                timeout=Timers.SLAC_INIT_TIMEOUT if not step_through else step_timeout,
+            bytes_sent = sendeth(s=socket_to_use, frame_to_send=frame_to_send, iface=iface_to_use)
+            if isawaitable(bytes_sent):
+                await bytes_sent
+
+            data_rcvd = await asyncio.wait_for(
+                readeth(socket_to_use, iface_to_use, FramesSizes.CM_SET_KEY_CNF),
+                Timers.SLAC_INIT_TIMEOUT if not step_through else step_timeout,
             )
         except asyncio.TimeoutError as e:
             raise TimeoutError("SetKey Timeout raised") from e
@@ -213,18 +252,15 @@ class SlacEvseSession(SlacSession):
         await asyncio.sleep(SLAC_SETTLE_TIME)
         logger.info("CM_SET_KEY: Finished!")
 
-        # ── Step 1 print ────────────────────────────────────
-        #banner("[STEP 1]  EVSE → PLC CHIP: CM_SET_KEY")
-        print(f"  ▶ Action    : New NMK + NID programmed into QCA7000 PLC chip")
-        print(f"  ▶ Dest MAC  : 00:b0:52:00:00:01 (local QCA7000 broadcast)")
-        
-        
-        print(f"  ▶ NMK       : [random — used only to boot PLC network, not the session key]")
-        print(f"  ▶ Note      : Real session NMK derived via IBE at Step 6")
-        print(f"  ▶ NID       : {hexlify(self.nid).decode()}  (7 bytes, derived from temp NMK)")
-        print(f"  ▶ Interface : {self.iface}")
+        # ── Status print ────────────────────────────────────
+        interface_label = "enxa0cec837bab6 (direct to EVSE board)" if use_device_iface else "eno1"
+        print(f"  ▶ Action    : NMK + NID programmed into EVSE QCA7000 PLC chip")
+        print(f"  ▶ Dest MAC  : {self.evse_board_mac.hex(':')}")
+        print(f"  ▶ Src MAC   : {src_mac.hex(':') if isinstance(src_mac, bytes) else src_mac}")
+        print(f"  ▶ NMK       : {hexlify(nmk).decode()}")
+        print(f"  ▶ NID       : {hexlify(self.nid).decode()}  (7 bytes, derived from NMK)")
+        print(f"  ▶ Interface : {interface_label}")
         print(f"  ▶ Status    : CM_SET_KEY.CNF received — QCA7000 confirmed")
-        #banner_end()
 
         return data_rcvd
 
@@ -523,44 +559,64 @@ class SlacEvseSession(SlacSession):
     async def cm_ibe_key_establishment(self):
         logger.debug("CM_IBE_KEY_ESTABLISHMENT: Started...")
 
-        ibe = IBEKeyEstablishment()
+        ibe = CertificatelessKeyEstablishment()
 
-        ev_identity   = "EV:"   + self.pev_mac.hex()
-        evse_identity = "EVSE:" + self.evse_mac.hex()
+        # MAC addresses serve as identities
+        ev_mac = self.pev_mac.hex()
+        evse_mac = self.evse_mac.hex()
 
-        # ── Step 5 print — part 1: PKG + key extraction ─────
-        banner("[STEP 5]  IBE KEY ESTABLISHMENT  (EVSE Side)")
-        print(f"  ▶ Method    : Boneh-Franklin IBE over bilinear pairing group SS512")
+        # Manufacturer tags (distinguish identity public elements per manufacturer)
+        M_EV = "M_EV"
+        M_EVSE = "M_EVSE"
+
+        # Full identity strings for context (MAC || manufacturer)
+        ev_identity = ev_mac + M_EV
+        evse_identity = evse_mac + M_EVSE
+
+        # ── Step 5 print — part 1: Two-manufacturer PKG + cross-domain enrollment ─────
+        banner("[STEP 5]  CERTIFICATELESS KEY ESTABLISHMENT  (EVSE Side)")
+        print(f"  ▶ Method    : Certificateless Two-Party IBC over bilinear pairing (SS512)")
         print(f"  ▶ Security  : BDH (Bilinear Diffie-Hellman) assumption")
+        print(f"  ▶ Scheme    : Cross-domain enrollment with two manufacturers")
         print()
-        print(f"  PKG (Private Key Generator):")
-        print(f"  ▶ PKG File  : {ibe.master_secret_path}")
-        print(f"  ▶ Action    : Master secret s loaded from file")
-        print(f"  ▶ Public Key: P_pub = s * P  (known to all parties)")
+        print(f"  Private Key Generators (Two Manufacturers):")
+        print(f"  ▶ EV Mfg    : s_M_EV, public key mpk_M_EV = s_M_EV * P")
+        print(f"  ▶ EVSE Mfg  : s_M_EVSE, public key mpk_M_EVSE = s_M_EVSE * P")
+        print(f"  ▶ Files     : {ibe.master_secret_ev_path}")
+        print(f"  ▶ Files     : {ibe.master_secret_evse_path}")
         print()
-        print(f"  Identity Strings (derived from MAC addresses):")
-        print(f"  ▶ EV   ID   : {ev_identity}")
-        print(f"  ▶ EVSE ID   : {evse_identity}")
+        print(f"  Identity Strings (MAC || Manufacturer tag):")
+        print(f"  ▶ EV   ID   : {ev_mac} || {M_EV}")
+        print(f"  ▶ EVSE ID   : {evse_mac} || {M_EVSE}")
         print()
 
-        evse_sk = ibe.extract_private_key(evse_identity)
-        print(f"  Private Key Extraction (EVSE):")
-        print(f"  ▶ Formula   : SK_EVSE = s × H('{evse_identity}')")
-        print(f"  ▶ H()       : hash-to-G1 (maps identity string to curve point)")
+        # Cross-domain private key computation
+        # SK_EVSE = s_M_EV * Q_EVSE + s_M_EVSE * Q_EVSE
+        evse_sk = ibe.compute_cross_domain_private_key(evse_mac, M_EVSE)
+        print(f"  Cross-Domain Private Key Computation (EVSE):")
+        print(f"  ▶ Formula   : SK_EVSE = s_M_EV * Q_EVSE + s_M_EVSE * Q_EVSE")
+        print(f"  ▶ where     : Q_EVSE = H(ID_EVSE || M_EVSE)")
+        print(f"  ▶ Partial 1 : s_M_EV * Q_EVSE (from EV manufacturer)")
+        print(f"  ▶ Partial 2 : s_M_EVSE * Q_EVSE (from EVSE manufacturer)")
+        print(f"  ▶ Combined  : SK_EVSE = Partial 1 + Partial 2 (locally)")
         print(f"  ▶ SK Type   : {type(evse_sk.secret_key).__name__} "
               f"(pairing.Element in G1)")
-        print(f"  ▶ Status    : EVSE private key extracted ✓")
+        print(f"  ▶ Status    : EVSE cross-domain key computed ✓")
         print()
 
+        # Derive shared secret via bilinear pairing
+        # K_EVSE = e(SK_EVSE, Q_EV)
         shared_secret = ibe.derive_shared_secret(
             my_private_key=evse_sk,
-            peer_identity=ev_identity,
+            peer_identity=ev_mac,
+            peer_manufacturer_tag=M_EV,
         )
         print(f"  Bilinear Pairing Computation (EVSE):")
-        print(f"  ▶ Formula   : shared = e(SK_EVSE, Q_EV)")
-        print(f"               = e(s×H(ID_EVSE), H(ID_EV))")
-        print(f"  ▶ By bilinearity this equals e(H(ID_EVSE), s×H(ID_EV))")
-        print(f"  ▶ Which equals the PEV computation e(SK_EV, Q_EVSE)")
+        print(f"  ▶ Formula   : K_EVSE = e(SK_EVSE, Q_EV)")
+        print(f"               = e((s_M_EV + s_M_EVSE)*Q_EVSE, Q_EV)")
+        print(f"  ▶ Result    : e(Q_EV, Q_EVSE)^(s_M_EV + s_M_EVSE)")
+        print(f"  ▶ By bilinearity, EV computes: K_EV = e(Q_EV, SK_EVSE)")
+        print(f"  ▶ Which gives the same result: e(Q_EV, Q_EVSE)^(s_M_EV + s_M_EVSE)")
         print(f"  ▶ Shared    : {shared_secret.hex()[:40]}...  ({len(shared_secret)} bytes)")
         print(f"  ▶ Status    : Pairing computed ✓")
         print()
@@ -574,7 +630,7 @@ class SlacEvseSession(SlacSession):
         self.nid = generate_nid(self.nmk)
 
         print(f"  NMK Derivation:")
-        print(f"  ▶ Formula   : NMK = SHA256(shared || 'SLAC-IBE-NMK-v1'")
+        print(f"  ▶ Formula   : NMK = SHA256(shared || 'SLAC-IBC-NMK-v1'")
         print(f"                             || run_id || ID_EV || ID_EVSE)[:16]")
         print(f"  ▶ Run ID    : {self.run_id.hex()}")
         print(f"  ▶ NMK       : {self.nmk.hex()}  (16 bytes)")
@@ -699,6 +755,8 @@ class SlacEvseSession(SlacSession):
         await self.cm_sounds_loop()
         await self.cm_atten_char()
         await self.cm_ibe_key_establishment()
+        # Update EVSE board with IBE-derived NMK via device interface
+        await self.evse_set_key(nmk=self.nmk, use_device_iface=True)
         await self.cm_slac_match()
 
 
