@@ -18,8 +18,9 @@ PROJECT_DIR  = "/home/jack/projects/noninteractive-ibc-slac"
 VENV_PYTHON  = f"{PROJECT_DIR}/venv/bin/python"
 EVSE_SCRIPT  = f"{PROJECT_DIR}/pyslac/examples/single_slac_session.py"
 PEV_SCRIPT   = f"{PROJECT_DIR}/pyslac/examples/ev_slac_scapy.py"
-IBE_SECRET   = f"{PROJECT_DIR}/ibe_master_secret.bin"
-IBE_GENERATOR= f"{PROJECT_DIR}/ibe_generator.bin"
+IBE_SECRET_EV   = f"{PROJECT_DIR}/ibe_master_secret_ev.bin"
+IBE_SECRET_EVSE = f"{PROJECT_DIR}/ibe_master_secret_evse.bin"
+IBE_GENERATOR   = f"{PROJECT_DIR}/ibe_generator.bin"
 IFACE        = "eno1"
 BOARD_PEV    = "88:FC:A6:1C:81:C2"
 BOARD_EVSE   = "88:FC:A6:1C:81:BB"
@@ -611,7 +612,7 @@ class SLACDemoApp:
 
         # Delete IBE files
         self._log("Reset", "\n[1/4] Deleting IBE key files...", "dim")
-        for f in [IBE_SECRET, IBE_GENERATOR]:
+        for f in [IBE_SECRET_EV, IBE_SECRET_EVSE, IBE_GENERATOR]:
             if os.path.exists(f):
                 os.remove(f)
                 self._log("Reset", f"  Deleted: {os.path.basename(f)}", "ok")
@@ -712,7 +713,7 @@ class SLACDemoApp:
 
         try:
             self.evse_proc = subprocess.Popen(
-                ["sudo", VENV_PYTHON, EVSE_SCRIPT],
+                ["sudo", VENV_PYTHON, "-u", EVSE_SCRIPT],
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
                 text=True,
@@ -775,7 +776,7 @@ class SLACDemoApp:
 
         try:
             self.pev_proc = subprocess.Popen(
-                ["sudo", VENV_PYTHON, PEV_SCRIPT],
+                ["sudo", VENV_PYTHON, "-u", PEV_SCRIPT],
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
                 text=True,

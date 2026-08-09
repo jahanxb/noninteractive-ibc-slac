@@ -5,7 +5,7 @@ from hashlib import sha256
 
 #filename: ev_slac_scapy.py
 
-from pyslac.ibe_key_establishment import IBEKeyEstablishment
+from pyslac.ibe_key_establishment import CertificatelessKeyEstablishment
 from pyslac.utils import generate_nid
 
 from typing import List
@@ -274,48 +274,102 @@ def attenCharResponse():
     sendp(frame_rsp, iface=IFACE, verbose=False)
 
 
+def pevSetKey(nmk: bytes):
+    """Program the PEV board with the derived NMK from IBE key establishment."""
+    logger.debug("PEV:Sending SetKey to program board with IBE-derived NMK")
+    global eth_header, homeplug_header
+    homeplug_header.mm_type = CM_SET_KEY | MMTYPE_REQ
+    eth_header.src = PEV_MAC
+    eth_header.dst = PEV_MAC  # Send to PEV board's MAC
+
+    nid = generate_nid(nmk)
+    nid_first_4 = int.from_bytes(nid[:4], 'big')
+    nid_last_3 = int.from_bytes(nid[4:7], 'big')
+    nmk_int = int.from_bytes(nmk, 'big')
+
+    # Create SetKeyRequest with correct NMK and NID
+    set_key_req = SetKeyRequest(
+        nid_first_4_bytes=nid_first_4,
+        nid_last_3bytes=nid_last_3,
+        new_key=nmk_int
+    )
+
+    frame_rsp = eth_header / homeplug_header / set_key_req
+    sendp(frame_rsp, iface=IFACE, verbose=False)
+    logger.debug(f"PEV:SetKey sent with NMK: {nmk.hex()}")
+    sleep(SLAC_SETTLE_TIME)
+
+    banner("[STEP 5a] PEV → Board: CM_SET_KEY.REQ (IBE-Derived NMK)")
+    print(f"  ▶ Action    : NMK derived via IBE programmed into PEV QCA7000 chip")
+    print(f"  ▶ NMK       : {nmk.hex()}")
+    print(f"  ▶ NID       : {nid.hex()}")
+    print(f"  ▶ Interface : {IFACE}")
+    print(f"  ▶ Status    : SetKey sent ✓")
+    banner_end()
+
+
 def ibeKeyEstablishment():
-    logger.debug("EV:Starting IBE-based key establishment")
+    logger.debug("EV:Starting certificateless key establishment")
     global ev_nmk, ev_nid
 
-    ibe = IBEKeyEstablishment()
+    ibe = CertificatelessKeyEstablishment()
 
-    ev_identity   = "EV:"   + PEV_MAC.replace(":", "").lower()
-    evse_identity = "EVSE:" + EVSE_MAC.replace(":", "").lower()
+    # MAC addresses (without colons) serve as identities
+    ev_mac = PEV_MAC.replace(":", "").lower()
+    evse_mac = EVSE_MAC.replace(":", "").lower()
 
-    # ── Step 6 print — part 1: PKG + key extraction ─────────
-    banner("[STEP 6]  IBE KEY ESTABLISHMENT  (PEV Side)")
-    print(f"  ▶ Method    : Boneh-Franklin IBE over bilinear pairing group SS512")
+    # Manufacturer tags
+    M_EV = "M_EV"
+    M_EVSE = "M_EVSE"
+
+    # Full identity strings for context
+    ev_identity = ev_mac + M_EV
+    evse_identity = evse_mac + M_EVSE
+
+    # ── Step 6 print — part 1: Two-manufacturer PKG + cross-domain enrollment ─────────
+    banner("[STEP 6]  CERTIFICATELESS KEY ESTABLISHMENT  (PEV Side)")
+    print(f"  ▶ Method    : Certificateless Two-Party IBC over bilinear pairing (SS512)")
     print(f"  ▶ Security  : BDH (Bilinear Diffie-Hellman) assumption")
+    print(f"  ▶ Scheme    : Cross-domain enrollment with two manufacturers")
     print()
-    print(f"  PKG (Private Key Generator):")
-    print(f"  ▶ PKG File  : {ibe.master_secret_path}")
-    print(f"  ▶ Action    : Master secret s loaded from file")
-    print(f"  ▶ Public Key: P_pub = s * P  (known to all parties)")
+    print(f"  Private Key Generators (Two Manufacturers):")
+    print(f"  ▶ EV Mfg    : s_M_EV, public key mpk_M_EV = s_M_EV * P")
+    print(f"  ▶ EVSE Mfg  : s_M_EVSE, public key mpk_M_EVSE = s_M_EVSE * P")
+    print(f"  ▶ Files     : ibe_master_secret_ev.bin")
+    print(f"  ▶ Files     : ibe_master_secret_evse.bin")
     print()
-    print(f"  Identity Strings (derived from MAC addresses):")
-    print(f"  ▶ EV   ID   : {ev_identity}")
-    print(f"  ▶ EVSE ID   : {evse_identity}")
+    print(f"  Identity Strings (MAC || Manufacturer tag):")
+    print(f"  ▶ EV   ID   : {ev_mac} || {M_EV}")
+    print(f"  ▶ EVSE ID   : {evse_mac} || {M_EVSE}")
     print()
 
-    ev_sk = ibe.extract_private_key(ev_identity)
-    print(f"  Private Key Extraction (PEV):")
-    print(f"  ▶ Formula   : SK_EV = s × H('{ev_identity}')")
-    print(f"  ▶ H()       : hash-to-G1 (maps identity string to curve point)")
+    # Cross-domain private key computation
+    # SK_EV = s_M_EV * Q_EV + s_M_EVSE * Q_EV
+    ev_sk = ibe.compute_cross_domain_private_key(ev_mac, M_EV)
+    print(f"  Cross-Domain Private Key Computation (PEV):")
+    print(f"  ▶ Formula   : SK_EV = s_M_EV * Q_EV + s_M_EVSE * Q_EV")
+    print(f"  ▶ where     : Q_EV = H(ID_EV || M_EV)")
+    print(f"  ▶ Partial 1 : s_M_EV * Q_EV (from EV manufacturer)")
+    print(f"  ▶ Partial 2 : s_M_EVSE * Q_EV (from EVSE manufacturer)")
+    print(f"  ▶ Combined  : SK_EV = Partial 1 + Partial 2 (locally)")
     print(f"  ▶ SK Type   : {type(ev_sk.secret_key).__name__} "
           f"(pairing.Element in G1)")
-    print(f"  ▶ Status    : EV private key extracted ✓")
+    print(f"  ▶ Status    : PEV cross-domain key computed ✓")
     print()
 
+    # Derive shared secret via bilinear pairing
+    # K_EV = e(SK_EV, Q_EVSE)
     shared_secret = ibe.derive_shared_secret(
         my_private_key=ev_sk,
-        peer_identity=evse_identity,
+        peer_identity=evse_mac,
+        peer_manufacturer_tag=M_EVSE,
     )
     print(f"  Bilinear Pairing Computation (PEV):")
-    print(f"  ▶ Formula   : shared = e(SK_EV, Q_EVSE)")
-    print(f"               = e(s×H(ID_EV), H(ID_EVSE))")
-    print(f"  ▶ By bilinearity this equals e(H(ID_EV), s×H(ID_EVSE))")
-    print(f"  ▶ Which equals the EVSE computation e(SK_EVSE, Q_EV)")
+    print(f"  ▶ Formula   : K_EV = e(SK_EV, Q_EVSE)")
+    print(f"               = e((s_M_EV + s_M_EVSE)*Q_EV, Q_EVSE)")
+    print(f"  ▶ Result    : e(Q_EV, Q_EVSE)^(s_M_EV + s_M_EVSE)")
+    print(f"  ▶ By bilinearity, EVSE computes: K_EVSE = e(Q_EV, SK_EVSE)")
+    print(f"  ▶ Which gives the same result: e(Q_EV, Q_EVSE)^(s_M_EV + s_M_EVSE)")
     print(f"  ▶ Shared    : {shared_secret.hex()[:40]}...  ({len(shared_secret)} bytes)")
     print(f"  ▶ Status    : Pairing computed ✓")
     print()
@@ -329,7 +383,7 @@ def ibeKeyEstablishment():
     ev_nid = generate_nid(ev_nmk)
 
     print(f"  NMK Derivation:")
-    print(f"  ▶ Formula   : NMK = SHA256(shared || 'SLAC-IBE-NMK-v1'")
+    print(f"  ▶ Formula   : NMK = SHA256(shared || 'SLAC-IBC-NMK-v1'")
     print(f"                             || run_id || ID_EV || ID_EVSE)[:16]")
     print(f"  ▶ Run ID    : {bytes(8).hex()}")
     print(f"  ▶ NMK       : {ev_nmk.hex()}  (16 bytes)")
@@ -338,11 +392,12 @@ def ibeKeyEstablishment():
     print(f"  Security Properties:")
     print(f"  ▶ Wire      : ZERO key material transmitted over PLC ✓")
     print(f"  ▶ Compare   : ECDH sends 2 public key frames (0x6080 + 0x6083)")
-    print(f"  ▶ IBE       : 0 frames — non-interactive key establishment")
+    print(f"  ▶ IBC       : 0 frames — non-interactive key establishment")
+    print(f"  ▶ Enrollment: Cross-domain (both manufacturers' keys required)")
     print(f"  ▶ Status    : NMK established successfully ✓")
     banner_end()
 
-    logger.debug("EV:IBE-based NMK established")
+    logger.debug("EV:Certificateless NMK established")
 
 
 def slacMatch():
@@ -505,8 +560,13 @@ def run():
     ibeKeyEstablishment()
     sleep(0.2)
 
-    # ── Step 5: SLAC_MATCH ───────────────────────────────────
-    banner("[STEP 5]  PEV → EVSE: CM_SLAC_MATCH.REQ")
+    # ── Step 5a: Program board with IBE-derived NMK ──────────
+    if ev_nmk:
+        pevSetKey(ev_nmk)
+    sleep(0.2)
+
+    # ── Step 6: SLAC_MATCH ───────────────────────────────────
+    banner("[STEP 6]  PEV → EVSE: CM_SLAC_MATCH.REQ")
     print(f"  ▶ Action    : EV requests final SLAC network matching")
     print(f"  ▶ PEV  MAC  : {PEV_MAC}")
     print(f"  ▶ EVSE MAC  : {EVSE_MAC}")
@@ -527,7 +587,7 @@ def run():
     sniffer.stop()
 
     # ── Final summary ────────────────────────────────────────
-    banner("SLAC + IBE HANDSHAKE COMPLETE  ✓")
+    banner("SLAC + IBE HANDSHAKE COMPLETE WITH HARDWARE PAIRING  ✓")
     print(f"  ▶ PEV  MAC     : {PEV_MAC}")
     print(f"  ▶ EVSE MAC     : {EVSE_MAC}")
     print(f"  ▶ NMK          : {ev_nmk.hex() if ev_nmk else 'N/A'}")

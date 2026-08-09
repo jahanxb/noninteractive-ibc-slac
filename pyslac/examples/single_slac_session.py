@@ -68,7 +68,7 @@ class SlacHandler(SlacSessionController):
 
         try:
             slac_session = SlacEvseSession(evse_id, network_interface, self.slac_config)
-            await slac_session.evse_set_key()
+            await slac_session.evse_set_key()  # Initialize EVSE board (will be updated with IBE NMK later)
             self.running_sessions.append(slac_session)
         except (OSError, TimeoutError, ValueError) as e:
             logger.error(
