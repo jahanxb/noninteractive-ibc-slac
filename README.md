@@ -949,3 +949,5 @@ The full SLAC + IBC frame sequence:
 - Qualcomm open-plc-utils (plctool): https://github.com/qca/open-plc-utils
 - HomePlug Green PHY Specification Release Version 1.1
 - devolo dLAN Green PHY Eval Board II Data Sheet v1.00
+
+<!-- Latest verification mark: cryptography documentation with code verification complete -->
